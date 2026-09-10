@@ -1,0 +1,22 @@
+{
+  "name": "routecodex-hooks",
+  "version": "0.1.0",
+  "description": "RouteCodex lifecycle hook framework and policy contracts",
+  "author": {
+    "name": "Jasonzhangf",
+    "url": "https://github.com/Jasonzhangf"
+  },
+  "repository": "https://github.com/Jasonzhangf/codex-hooks",
+  "license": "MIT",
+  "keywords": ["routecodex", "hooks", "codexapp", "daemon"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "RouteCodex Hooks",
+    "shortDescription": "Lifecycle hooks with explicit status-gated wakeups",
+    "longDescription": "A framework for official Codex lifecycle adapters, independently scoped policies, daemon state, and codexapp sendmessage wakeups.",
+    "developerName": "Jasonzhangf",
+    "category": "Developer Tools",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": ["Inspect hook status", "Show pending wakeups", "Explain the hook graph"]
+  }
+}

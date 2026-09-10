@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema_version": 1,
+  "project": "routecodex-hooks",
+  "resources": [
+    { "id": "official_hook_event", "owner": "hook-adapter", "source": "official stdin", "mutable": false },
+    { "id": "message_intent", "owner": "policy", "source": "policy output", "mutable": false },
+    { "id": "session_status", "owner": "codexapp", "source": "native App Server observation", "mutable": false },
+    { "id": "delivery_receipt", "owner": "hooksd.transport", "source": "codexapp response and later evidence", "mutable": true },
+    { "id": "stopless_state", "owner": "policy.stopless", "source": "persistent policy store", "mutable": true },
+    { "id": "update_goal_state", "owner": "policy.update_goal", "source": "persistent policy store", "mutable": true },
+    { "id": "schedule_state", "owner": "policy.timer", "source": "persistent policy store", "mutable": true },
+    { "id": "longhorizon_state", "owner": "policy.longhorizon", "source": "persistent policy store", "mutable": true }
+  ],
+  "edges": [
+    { "from": "official_hook_event", "to": "message_intent", "owner": "policy", "operation": "derive" },
+    { "from": "message_intent", "to": "session_status", "owner": "hooksd.transport", "operation": "observe" },
+    { "from": "session_status", "to": "delivery_receipt", "owner": "hooksd.transport", "operation": "gate" },
+    { "from": "delivery_receipt", "to": "session_status", "owner": "hooksd.transport", "operation": "recheck_pending" }
+  ],
+  "forbidden": [
+    { "owner": "mcp", "operation": "send or mutate" },
+    { "owner": "hook-adapter", "operation": "own policy state" },
+    { "owner": "codexapp", "operation": "own timer, goal, or stopless state" },
+    { "owner": "policy.stopless", "operation": "read or mutate update_goal_state" }
+  ]
+}

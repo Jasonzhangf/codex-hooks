@@ -1,0 +1,118 @@
+# RouteCodex Hooks Framework Graph
+
+This is a capability skeleton. It defines the graph and evidence boundaries;
+it does not implement Stopless, scheduling, memory, or goal mutation policy.
+
+## Invariants
+
+1. Skills contain static facts and methods.
+2. MCP reads daemon state; it never advances state.
+3. CLI performs authorized mutations; the result is re-read through MCP.
+4. Official hooks are adapters only.
+5. The daemon owns policy state, idempotency, persistence, status gating, and
+   delivery decisions.
+6. `codexapp` owns Codex TUI/Desktop App Server communication and status
+   observation. It is an internal independent binary in the RouteCodex
+   distribution, not a provider protocol feature.
+7. `codexapp.sendmessage` is the only wake action.
+8. Every message intent declares one of:
+   `idle_only` (do not disturb a working object) or `working_allowed`.
+9. A native queue acceptance is not proof of delivery, execution, reply, or
+   read. Those are separate evidence states.
+10. Stopless and update-goal have separate hook kinds and separate policy
+    state. They share only the transport/status gate.
+
+## Complete framework graph
+
+```mermaid
+flowchart TD
+  A[routecodex start] --> B[load plugin and official hook definitions]
+  B -->|trust pending or invalid| X1[not ready: fail closed]
+  B --> C[start hooks daemon]
+  C -->|RPC unavailable| X2[not ready: hook reports error]
+  C --> D[start internal codexapp]
+  D -->|App Server handshake/capability failure| X3[not ready: no message]
+  D --> E[framework ready]
+
+  H[official lifecycle hook] --> I[parse and validate event]
+  I -->|invalid/unsupported| X4[hook error; no mutation]
+  I --> J[classify: input / stop / tool-call / update-goal]
+  J --> K[daemon idempotency lookup]
+  K -->|duplicate| R[return recorded result]
+  K --> L[obtain MessageIntent or observe-only event]
+  L -->|no intent| R2[return official no-op result]
+  L --> M[codexapp.session_status]
+  M -->|unknown/disconnected| X5[fail closed; no send]
+  M -->|idle| N[send allowed]
+  M -->|working + idle_only| O[deferred; persist pending]
+  M -->|working + working_allowed| N
+  M -->|stopping| O
+  O --> P[status watcher or later legal trigger]
+  P --> M
+  N --> Q[codexapp.sendmessage]
+  Q -->|transport error| X6[failed; preserve error]
+  Q -->|accepted| S[accepted only]
+  S -->|native evidence| T[delivered]
+  T --> U[executed / replied / read, only with matching evidence]
+  Q --> V{origin is Stop?}
+  V -->|yes| W[return continue:false]
+  V -->|no| Y[return event-specific official result]
+
+  Z[timer or longhorizon clock] --> L
+  Z2[CLI mutation] --> Z3[daemon persisted schedule/goal state]
+  Z3 --> Z
+  Z4[MCP query] --> Z3
+  Z4 -->|read only| Z4
+```
+
+## Edge contract
+
+| Edge | Owner | Input → output | State transition | Failure/terminal evidence |
+| --- | --- | --- | --- | --- |
+| Startup → plugin load | Codex/plugin loader | enabled package → hook definitions | `loading → loaded` | trust hash/config error; no hook run |
+| Plugin load → daemon | RouteCodex lifecycle | hook endpoint + instance identity → ready RPC | `starting → ready` | endpoint/health failure |
+| Daemon → codexapp | RouteCodex lifecycle | typed app-server target → capabilities | `connecting → capable` | namespace/appserver mismatch or unsupported capability |
+| Official event → adapter | hook adapter | stdin JSON → validated event | `received → classified` | malformed/unknown event; no daemon mutation |
+| Adapter → daemon | daemon RPC | event + optional intent → decision | event key recorded exactly once | duplicate returns recorded result |
+| Daemon → status | codexapp | target → `idle/working/stopping/disconnected/unknown` | observation only | unknown/disconnected is fail closed |
+| Status → send gate | daemon | intent mode + state → send/defer/fail | `created → deferred` or send path | working + `idle_only` never calls send |
+| Daemon → sendmessage | codexapp | target + body + attempt id → native receipt | `emitted → accepted` | exact native error, no silent retry |
+| Stop send → hook result | Stop adapter | accepted send → official JSON | current hook ends | `continue:false`; never add `decision:block` |
+| Accepted → delivered | codexapp/daemon | target receipt → native receipt evidence | `accepted → delivered` | acceptance alone remains incomplete |
+| Delivered → reply/read | codexapp/daemon | matching item/turn/cursor → evidence | `delivered → executed → replied → read` | timeout/unchanged cursor/unknown remains incomplete |
+| Timer/longhorizon → intent | daemon policy | due state → intent | `scheduled → due → pending/sent` | no timer feature in this skeleton |
+| MCP → state | MCP server | query → snapshot | no transition | query cannot send or claim execution |
+| CLI → mutation | CLI | explicit command → daemon mutation | persisted transition | mutation result must be MCP-readable |
+
+## State matrix
+
+| Observed state | `idle_only` | `working_allowed` |
+| --- | --- | --- |
+| `idle` | send | send |
+| `working` | defer, do not call `sendmessage` | send |
+| `stopping` | defer until a legal idle observation | defer until a legal idle observation |
+| `disconnected` | fail closed | fail closed |
+| `unknown` | fail closed | fail closed |
+
+`deferred` is not `accepted`; `accepted` is not `delivered`; and no state is
+promoted by a log line, MCP read, or queue insertion alone.
+
+## Hook separation
+
+- `Stop`: only official Stop continuation boundary. A sent wake message is
+  paired with `continue:false`; official `decision:block` is reserved for an
+  explicitly modeled native continuation policy.
+- `UserPromptSubmit`/`SessionStart`: input observation/injection boundary.
+  Future context injection uses the official `additionalContext` result and is
+  not a hidden payload mutation.
+- `PreToolUse`/`PostToolUse`: tool-call boundary. `update_goal` is a matcher
+  specialization and its daemon policy is independent from Stopless.
+- Timer/longhorizon: daemon-originated intent, not a fake Hook event. It wakes
+  only by calling `codexapp.sendmessage` after the same status gate.
+
+## Evidence ceiling of this skeleton
+
+The tests prove the local HTTP adapter, daemon status gate, mock codexapp
+port, Stop result shape, deferral/resume, idempotency, and hook-kind
+separation. They do not prove a real TUI/Desktop App Server, plugin trust
+approval, production daemon persistence, or RouteCodex managed startup.

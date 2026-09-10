@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "routecodex-hooks/hook-event/v1",
+  "title": "OfficialHookEvent",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["session_id", "hook_event_name", "cwd"],
+  "properties": {
+    "session_id": { "type": "string", "minLength": 1 },
+    "turn_id": { "type": ["string", "null"] },
+    "hook_event_name": {
+      "type": "string",
+      "enum": ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"]
+    },
+    "cwd": { "type": "string", "minLength": 1 },
+    "tool_name": { "type": ["string", "null"] },
+    "tool_use_id": { "type": ["string", "null"] },
+    "event_id": { "type": ["string", "null"] },
+    "stop_hook_active": { "type": "boolean" }
+  }
+}

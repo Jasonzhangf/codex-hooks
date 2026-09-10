@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "routecodex-hooks/daemon-config/v1",
+  "title": "HooksDaemonConfig",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["runtime", "codexapp", "policies"],
+  "properties": {
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["socket", "state_directory"],
+      "properties": {
+        "socket": { "type": "string", "minLength": 1 },
+        "state_directory": { "type": "string", "minLength": 1 }
+      }
+    },
+    "codexapp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["socket", "required_capabilities"],
+      "properties": {
+        "socket": { "type": "string", "minLength": 1 },
+        "required_capabilities": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        }
+      }
+    },
+    "policies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "enabled", "config"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "enabled": { "type": "boolean" },
+          "config": { "type": "object" }
+        }
+      }
+    }
+  }
+}

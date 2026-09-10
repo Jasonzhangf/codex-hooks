@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "routecodex-hooks/session-target/v1",
+  "title": "SessionTarget",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["namespace", "appserver_id", "session_id", "thread_id"],
+  "properties": {
+    "namespace": { "type": "string", "minLength": 1 },
+    "appserver_id": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "minLength": 1 },
+    "thread_id": { "type": "string", "minLength": 1 }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema_version": 1,
+  "machines": {
+    "runtime": {
+      "initial": "down",
+      "states": ["down", "starting_codexapp", "codexapp_ready", "starting_hooksd", "ready", "draining", "failed"],
+      "transitions": [
+        ["down", "start", "starting_codexapp"],
+        ["starting_codexapp", "capabilities_ok", "codexapp_ready"],
+        ["starting_codexapp", "error", "failed"],
+        ["codexapp_ready", "start_hooksd", "starting_hooksd"],
+        ["starting_hooksd", "ready", "ready"],
+        ["starting_hooksd", "error", "failed"],
+        ["ready", "shutdown", "draining"],
+        ["draining", "closed", "down"],
+        ["ready", "fatal_error", "failed"]
+      ]
+    },
+    "message": {
+      "initial": "created",
+      "states": ["created", "deferred", "emitted", "accepted", "delivered", "executed", "replied", "read", "failed", "unknown_delivery"],
+      "transitions": [
+        ["created", "working_idle_only_or_stopping", "deferred"],
+        ["created", "send_gate_open", "emitted"],
+        ["created", "unknown_or_disconnected", "failed"],
+        ["emitted", "native_accept", "accepted"],
+        ["emitted", "transport_error", "failed"],
+        ["emitted", "uncertain_timeout", "unknown_delivery"],
+        ["accepted", "target_receipt", "delivered"],
+        ["delivered", "execution_evidence", "executed"],
+        ["executed", "new_target_turn", "replied"],
+        ["replied", "read_with_cursor", "read"],
+        ["deferred", "idle_observed", "emitted"],
+        ["deferred", "unknown_or_disconnected", "failed"]
+      ]
+    },
+    "session": {
+      "states": ["idle", "working", "stopping", "disconnected", "unknown"],
+      "gate": {
+        "idle_only": { "idle": "send", "working": "defer", "stopping": "defer", "disconnected": "fail_closed", "unknown": "fail_closed" },
+        "working_allowed": { "idle": "send", "working": "send", "stopping": "defer", "disconnected": "fail_closed", "unknown": "fail_closed" }
+      }
+    }
+  }
+}

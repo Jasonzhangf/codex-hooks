@@ -1,0 +1,13 @@
+{
+  "name": "routecodex-hooks-framework",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/protocol.js && node --check src/daemon.js && node --check src/server.js && node --check src/hook-entry.js && node --check src/orchestrator.js && node --check src/supervisor.js"
+  },
+  "dependencies": {
+    "cordis": "4.0.0-rc.10"
+  }
+}

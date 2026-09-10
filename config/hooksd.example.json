@@ -1,0 +1,11 @@
+{
+  "runtime": {
+    "socket": "~/.codex/routecodex-hooks/hooksd.sock",
+    "state_directory": "~/.codex/routecodex-hooks/state"
+  },
+  "codexapp": {
+    "socket": "~/.codex/routecodex-hooks/codexapp.sock",
+    "required_capabilities": ["session_status", "sendmessage"]
+  },
+  "policies": []
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "routecodex-hooks/delivery-receipt/v1",
+  "title": "DeliveryReceipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["intent_id", "state", "attempt_id", "observed_at"],
+  "properties": {
+    "intent_id": { "type": "string", "minLength": 1 },
+    "state": {
+      "type": "string",
+      "enum": ["created", "deferred", "emitted", "accepted", "delivered", "executed", "replied", "read", "failed", "unknown_delivery"]
+    },
+    "attempt_id": { "type": "string", "minLength": 1 },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "error": { "type": ["object", "null"] },
+    "native": { "type": ["object", "null"] }
+  }
+}

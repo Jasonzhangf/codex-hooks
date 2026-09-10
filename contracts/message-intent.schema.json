@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "routecodex-hooks/message-intent/v1",
+  "title": "MessageIntent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["intent_id", "source", "target", "body", "send_mode", "event_key"],
+  "properties": {
+    "intent_id": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "enum": ["stopless", "update-goal", "timer", "longhorizon", "operator"] },
+    "target": { "$ref": "session-target.schema.json" },
+    "body": { "type": "string", "minLength": 1 },
+    "send_mode": { "type": "string", "enum": ["idle_only", "working_allowed"] },
+    "event_key": { "type": "string", "minLength": 1 },
+    "expires_at": { "type": ["string", "null"], "format": "date-time" }
+  }
+}

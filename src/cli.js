@@ -22,7 +22,7 @@ if (operation === "config-show") {
   print(setStopHookEnabled(readInstallRecord(), operation === "hook-enable"));
 } else if (operation === "status") {
   const record = readInstallRecord();
-  print(await new McpStateClient(endpoint || record.endpoint).queryStatus());
+  print(await new McpStateClient(normalizeEndpoint(endpoint || record.endpoint)).queryStatus());
 } else if (operation === "operator-enable" || operation === "operator-disable") {
   const name = required(args[0], "operator name");
   await mutate({ operation: "operator.set_enabled", name, enabled: operation === "operator-enable" });
@@ -38,7 +38,7 @@ if (operation === "config-show") {
 
 async function mutate(value) {
   const record = tryReadInstallRecord();
-  const targetEndpoint = endpoint || record?.endpoint || "http://127.0.0.1:8787";
+  const targetEndpoint = normalizeEndpoint(endpoint || record?.endpoint || "http://127.0.0.1:8787");
   const response = await fetch(`${targetEndpoint}/v1/control/mutate`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || `daemon mutation failed: ${response.status}`);
@@ -91,6 +91,7 @@ function tryReadInstallRecord() {
 function normalizeEndpoint(value) {
   const url = new URL(value);
   if (!["http:", "https:"].includes(url.protocol) || url.pathname !== "/" || url.search || url.hash) throw new Error("daemon endpoint must be an http(s) origin");
+  if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) throw new Error("daemon endpoint must use a loopback host");
   return value.replace(/\/$/, "");
 }
 

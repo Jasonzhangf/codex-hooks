@@ -106,3 +106,16 @@ test("health endpoint is an explicit daemon readiness probe", async () => {
     await server.close();
   }
 });
+
+test("health endpoint advertises a valid IPv6 loopback URL", async () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const server = new DaemonHttpServer(daemon);
+  const endpoint = await server.listen("::1", 0);
+  try {
+    assert.equal(new URL(endpoint).hostname, "[::1]");
+    const response = await fetch(`${endpoint}/health`);
+    assert.equal(response.status, 200);
+  } finally {
+    await server.close();
+  }
+});

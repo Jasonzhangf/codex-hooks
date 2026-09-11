@@ -17,7 +17,8 @@ export class DaemonHttpServer {
       });
     });
     const address = this.server.address();
-    return `http://${address.address}:${address.port}`;
+    const formattedHost = address.address.includes(":") ? `[${address.address}]` : address.address;
+    return `http://${formattedHost}:${address.port}`;
   }
 
   async close() {

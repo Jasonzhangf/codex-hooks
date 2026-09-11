@@ -24,6 +24,7 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
     assert.equal(fs.existsSync(join(first.skills_directory, "routecodex-hooks", "SKILL.md")), true);
     assert.equal(fs.statSync(first.cli_wrapper).mode & 0o111, 0o111);
     assert.equal(fs.statSync(first.mcp_wrapper).mode & 0o111, 0o111);
+    assert.equal(fs.statSync(first.daemon_wrapper).mode & 0o111, 0o111);
     assert.equal(
       await readFile(join(first.skills_directory, "routecodex-hooks", "SKILL.md"), "utf8"),
       await readFile(join(process.cwd(), "skills", "routecodex-hooks", "SKILL.md"), "utf8"),
@@ -129,7 +130,7 @@ test("installed Stop command reaches a real hooksd process on a clean host", asy
     const init = await run(process.execPath, ["scripts/init.mjs", "--codex-home", codexHome, "--bin-dir", binDir, "--endpoint", `http://127.0.0.1:${port}`]);
     assert.equal(init.code, 0, init.stderr);
     const receipt = JSON.parse(init.stdout);
-    daemon = spawn(process.execPath, ["src/daemon-entry.js", "--config", receipt.daemon_config, "--codexapp-module", modulePath], {
+    daemon = spawn(receipt.daemon_wrapper, ["--config", receipt.daemon_config, "--codexapp-module", modulePath], {
       cwd: process.cwd(),
       stdio: ["ignore", "pipe", "pipe"],
     });

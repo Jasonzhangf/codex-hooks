@@ -59,7 +59,8 @@ npm run init
 
 `init` installs the local `src/`, `hooks/`, and `skills/` under
 `~/.codex/routecodex-hooks`, copies the skills into `~/.codex/skills`, creates
-the daemon configuration and executable wrappers under `~/.local/bin`, and
+the daemon configuration and executable CLI/MCP/daemon wrappers under
+`~/.local/bin`, and
 registers the managed official Stop hook in `~/.codex/hooks.json`. It does not
 overwrite unrelated hook entries and can be repeated safely. For an isolated
 installation, pass `--codex-home`, `--bin-dir`, and `--endpoint`.
@@ -81,6 +82,14 @@ routecodex-hooks hook-enable stop
 The installed MCP wrapper is read-only. Register it once with
 `codex mcp add routecodex-hooks -- routecodex-hooks-mcp` and use its
 `routecodex_hooks_status` tool to query health, operators, and schedules.
+
+The installed `routecodex-hooksd` wrapper is the stable daemon process entry
+for the RouteCodex lifecycle supervisor:
+
+```bash
+routecodex-hooksd --config ~/.codex/routecodex-hooks/config/hooksd.json \
+  --codexapp-module /absolute/path/to/codexapp-port.mjs
+```
 
 ```bash
 npm run check

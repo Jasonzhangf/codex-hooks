@@ -24,6 +24,7 @@ export function installPaths({ codexHome = join(homedir(), ".codex"), binDir = j
     binDirectory: resolve(binDir),
     cliWrapper: join(resolve(binDir), "routecodex-hooks"),
     mcpWrapper: join(resolve(binDir), "routecodex-hooks-mcp"),
+    daemonWrapper: join(resolve(binDir), "routecodex-hooksd"),
   };
 }
 
@@ -57,6 +58,7 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
   writeJson(paths.daemonConfig, daemonConfig);
   writeExecutable(paths.cliWrapper, wrapperSource(paths.sourceDirectory, "cli.js", paths.installRecord));
   writeExecutable(paths.mcpWrapper, wrapperSource(paths.sourceDirectory, "mcp-server.js", paths.installRecord));
+  writeExecutable(paths.daemonWrapper, wrapperSource(paths.sourceDirectory, "daemon-entry.js", paths.installRecord));
 
   const hookConfig = readJsonIfExists(paths.hooksFile) || {};
   removeManagedHooks(hookConfig, [...managedCommands, hookCommand]);
@@ -79,6 +81,7 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
     bin_directory: paths.binDirectory,
     cli_wrapper: paths.cliWrapper,
     mcp_wrapper: paths.mcpWrapper,
+    daemon_wrapper: paths.daemonWrapper,
     initialized_at: new Date().toISOString(),
   };
   writeJson(paths.installRecord, record);

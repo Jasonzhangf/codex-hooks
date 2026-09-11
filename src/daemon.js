@@ -1,13 +1,18 @@
 import {
   DELIVERY_STATES,
   SEND_MODES,
+  DEFERRED_SESSION_STATES,
+  FAIL_CLOSED_SESSION_STATES,
+  SEND_ELIGIBLE_STATES,
   SESSION_STATES,
   classifyHook,
   clone,
   eventKey,
   normalizeHookEvent,
   normalizeIntent,
+  normalizeSessionState,
 } from "./protocol.js";
+import { assertCodexAppPort } from "./codexapp-port.js";
 
 const DELIVERY = Object.freeze({
   DEFERRED: "deferred",
@@ -21,6 +26,7 @@ export class MemoryStateStore {
     this.events = new Map();
     this.intents = new Map();
     this.transitions = [];
+    this.controls = new Map();
   }
 
   getEvent(key) {
@@ -35,6 +41,10 @@ export class MemoryStateStore {
     return clone(this.intents.get(key));
   }
 
+  listIntents() {
+    return [...this.intents.values()].map(clone);
+  }
+
   putIntent(key, value) {
     this.intents.set(key, clone(value));
   }
@@ -42,12 +52,28 @@ export class MemoryStateStore {
   recordTransition(value) {
     this.transitions.push(clone(value));
   }
+
+  getControl(key) {
+    return clone(this.controls.get(key));
+  }
+
+  putControl(key, value) {
+    this.controls.set(key, clone(value));
+  }
+
+  snapshot() {
+    return {
+      events: clone(Object.fromEntries(this.events)),
+      intents: clone(Object.fromEntries(this.intents)),
+      transitions: clone(this.transitions),
+      controls: clone(Object.fromEntries(this.controls)),
+    };
+  }
 }
 
 export class HooksDaemon {
   constructor({ codexapp, store = new MemoryStateStore(), now = () => new Date().toISOString(), intentFactory = null }) {
-    if (!codexapp) throw new Error("codexapp port is required");
-    this.codexapp = codexapp;
+    this.codexapp = assertCodexAppPort(codexapp);
     this.store = store;
     this.now = now;
     this.intentFactory = intentFactory;
@@ -75,7 +101,11 @@ export class HooksDaemon {
   }
 
   async processHook(event, hookKind, key, rawIntent) {
-
+    if (hookKind === "stop" && event.stop_hook_active) {
+      const result = this.result(event, hookKind, "guarded", { delivery: null, guard: "stop_hook_active" });
+      this.store.putEvent(key, result);
+      return result;
+    }
     const generatedIntent = rawIntent || (this.intentFactory ? await this.intentFactory(event, hookKind) : null);
     if (!generatedIntent) {
       const result = this.result(event, hookKind, "observed", { delivery: null });
@@ -112,33 +142,30 @@ export class HooksDaemon {
   }
 
   async dispatchOnce(event, hookKind, intent) {
-
-    if (hookKind === "stop" && event.stop_hook_active) {
-      const result = this.result(event, hookKind, "guarded", { delivery: null, guard: "stop_hook_active" });
-      this.rememberIntent(intent, { intent_id: intent.intent_id }, "guarded");
-      return result;
+    if (intent.expires_at && Date.parse(intent.expires_at) <= Date.parse(this.now())) {
+      const delivery = this.transition(intent, "expired", { at: this.now(), expires_at: intent.expires_at });
+      this.rememberIntent(intent, delivery, "expired");
+      return this.result(event, hookKind, "expired", { delivery });
     }
 
     const observed = await this.codexapp.session_status(intent.target);
-    const state = observed?.state || observed?.status?.type || "unknown";
+    const state = normalizeSessionState(observed);
     if (!SESSION_STATES.includes(state)) return this.fail(event, hookKind, intent, "unknown_session_state", state);
 
-    if (state === "disconnected" || state === "unknown") {
+    if (FAIL_CLOSED_SESSION_STATES.includes(state)) {
       return this.fail(event, hookKind, intent, `${state}_session`, state);
     }
 
-    if (state === "working" && intent.send_mode === SEND_MODES.IDLE_ONLY) {
+    if ((state === "working" && intent.send_mode === SEND_MODES.IDLE_ONLY) ||
+      (DEFERRED_SESSION_STATES.includes(state) && state !== "working")) {
       const delivery = this.transition(intent, DELIVERY.DEFERRED, { state, at: this.now() });
       const result = this.result(event, hookKind, "deferred", { delivery });
       this.rememberIntent(intent, delivery, "deferred");
       return result;
     }
 
-    if (state === "stopping") {
-      const delivery = this.transition(intent, DELIVERY.DEFERRED, { state, at: this.now() });
-      const result = this.result(event, hookKind, "deferred", { delivery });
-      this.rememberIntent(intent, delivery, "deferred");
-      return result;
+    if (!SEND_ELIGIBLE_STATES.includes(state) && !(state === "working" && intent.send_mode === SEND_MODES.WORKING_ALLOWED)) {
+      return this.fail(event, hookKind, intent, "session_not_sendable", state);
     }
 
     return this.send(event, hookKind, intent, state);
@@ -147,12 +174,15 @@ export class HooksDaemon {
   async flushPending(target) {
     const normalizedTarget = target;
     const status = await this.codexapp.session_status(normalizedTarget);
-    const state = status?.state || status?.status?.type || "unknown";
-    const pending = [...this.store.intents.values()]
+    const state = normalizeSessionState(status);
+    const pending = this.store.listIntents
+      ? this.store.listIntents()
+      : [...this.store.intents.values()].map(clone);
+    const deferred = pending
       .filter((record) => record.decision === "deferred" && sameTarget(record.target, normalizedTarget))
       .map((record) => record.intent || record);
-    if (state === "unknown" || state === "disconnected") {
-      const failed = pending.map((intent) => {
+    if (FAIL_CLOSED_SESSION_STATES.includes(state)) {
+      const failed = deferred.map((intent) => {
         const delivery = this.transition(intent, DELIVERY.FAILED, {
           code: `${state}_session`,
           state,
@@ -163,11 +193,11 @@ export class HooksDaemon {
       });
       return { state, decision: "fail_closed", sent: [], failed };
     }
-    if (state !== "idle") return { state, decision: "deferred", sent: [] };
+    if (!SEND_ELIGIBLE_STATES.includes(state)) return { state, decision: "deferred", sent: [] };
 
     const sent = [];
     const failed = [];
-    for (const intent of pending) {
+    for (const intent of deferred) {
       try {
         const attemptId = `${intent.intent_id}:resume`;
         const emitted = this.transition(intent, DELIVERY.EMITTED, { state, attempt_id: attemptId, at: this.now() });

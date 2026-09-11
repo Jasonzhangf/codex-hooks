@@ -1,8 +1,10 @@
 import http from "node:http";
+import { FrameworkControlPlane } from "./control.js";
 
 export class DaemonHttpServer {
-  constructor(daemon) {
+  constructor(daemon, { control = new FrameworkControlPlane({ store: daemon.store }) } = {}) {
     this.daemon = daemon;
+    this.control = control;
     this.server = http.createServer((request, response) => this.handle(request, response));
   }
 
@@ -23,20 +25,43 @@ export class DaemonHttpServer {
   }
 
   async handle(request, response) {
+    if (request.method === "GET" && request.url === "/health") {
+      this.writeJson(response, 200, { protocol: "routecodex-hooks/v1", ready: true });
+      return;
+    }
+    if (request.method === "GET" && request.url === "/v1/state") {
+      this.writeJson(response, 200, { protocol: "routecodex-hooks/v1", state: this.daemon.store.snapshot?.() || {} });
+      return;
+    }
+    if (request.method === "GET" && request.url === "/v1/control/state") {
+      this.writeJson(response, 200, { protocol: "routecodex-hooks/v1", state: this.control.query() });
+      return;
+    }
+    if (request.method === "POST" && request.url === "/v1/control/mutate") {
+      try {
+        const body = await readJson(request);
+        this.writeJson(response, 200, { protocol: "routecodex-hooks/v1", result: this.control.mutate(body) });
+      } catch (error) {
+        this.writeJson(response, 400, { protocol: "routecodex-hooks/v1", error: error.message });
+      }
+      return;
+    }
     if (request.method !== "POST" || request.url !== "/v1/hooks/dispatch") {
-      response.writeHead(404, { "content-type": "application/json" });
-      response.end(JSON.stringify({ error: "not_found" }));
+      this.writeJson(response, 404, { error: "not_found" });
       return;
     }
     try {
       const body = await readJson(request);
       const result = await this.daemon.handleHook(body.event, { intent: body.intent || null, kind: body.kind || null });
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(result));
+      this.writeJson(response, 200, result);
     } catch (error) {
-      response.writeHead(400, { "content-type": "application/json" });
-      response.end(JSON.stringify({ protocol: "routecodex-hooks/v1", error: error.message }));
+      this.writeJson(response, 400, { protocol: "routecodex-hooks/v1", error: error.message });
     }
+  }
+
+  writeJson(response, status, value) {
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(JSON.stringify(value));
   }
 }
 

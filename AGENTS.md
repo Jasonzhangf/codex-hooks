@@ -1,0 +1,23 @@
+# Codex Hooks Framework
+
+This repository owns the independent Hooks Framework, its daemon, plugin
+operators, typed CodexApp port, and official Codex lifecycle adapters.
+
+## Ownership
+
+- Skills contain static facts and usage methods.
+- MCP is read-only state projection.
+- CLI is the authorized mutation surface.
+- Official hooks validate and adapt events; they do not own policy state.
+- `hooksd` owns policy state, persistence, idempotency, status gating, and
+  delivery decisions.
+- `codexapp` owns TUI/Desktop App Server transport and running-state evidence.
+
+No operator may call CodexApp directly. No control state may be reconstructed
+from logs or business message payloads. Unknown or disconnected running state
+fails closed. The default message mode is idle-only so automatic work does not
+interrupt a working Codex session.
+
+This repository intentionally does not implement Stopless, scheduling,
+update-goal mutation, or memory behavior. It provides their extension points
+and contract probes only.

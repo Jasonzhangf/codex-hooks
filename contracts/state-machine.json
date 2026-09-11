@@ -17,30 +17,105 @@
         ["ready", "fatal_error", "failed"]
       ]
     },
+    "session": {
+      "states": ["idle", "working", "waiting_for_input", "stopping", "stopped", "starting", "disconnected", "failed", "unknown"],
+      "gate": {
+        "idle_only": {
+          "idle": "send",
+          "working": "defer",
+          "waiting_for_input": "send",
+          "stopping": "defer",
+          "stopped": "send",
+          "starting": "defer",
+          "disconnected": "fail_closed",
+          "failed": "fail_closed",
+          "unknown": "fail_closed"
+        },
+        "working_allowed": {
+          "idle": "send",
+          "working": "send",
+          "waiting_for_input": "send",
+          "stopping": "defer",
+          "stopped": "send",
+          "starting": "defer",
+          "disconnected": "fail_closed",
+          "failed": "fail_closed",
+          "unknown": "fail_closed"
+        }
+      }
+    },
+    "hook": {
+      "initial": "received",
+      "states": ["received", "validated", "normalized", "dispatched", "waiting", "decided", "acknowledged", "timed_out", "failed", "duplicate", "stale"],
+      "transitions": [
+        ["received", "valid", "validated"],
+        ["received", "invalid", "failed"],
+        ["validated", "normalized", "normalized"],
+        ["normalized", "dispatch", "dispatched"],
+        ["dispatched", "status_or_policy_pending", "waiting"],
+        ["dispatched", "duplicate", "duplicate"],
+        ["dispatched", "expired", "stale"],
+        ["waiting", "decision", "decided"],
+        ["waiting", "timeout", "timed_out"],
+        ["decided", "projected", "acknowledged"],
+        ["decided", "projection_error", "failed"]
+      ]
+    },
     "message": {
       "initial": "created",
-      "states": ["created", "deferred", "emitted", "accepted", "delivered", "executed", "replied", "read", "failed", "unknown_delivery"],
+      "states": ["created", "suppressed", "queued", "deferred", "emitted", "sending", "accepted", "delivered", "executed", "replied", "read", "failed", "unknown_delivery", "expired", "cancelled"],
       "transitions": [
+        ["created", "policy_suppressed", "suppressed"],
         ["created", "working_idle_only_or_stopping", "deferred"],
+        ["created", "queue_for_later", "queued"],
         ["created", "send_gate_open", "emitted"],
         ["created", "unknown_or_disconnected", "failed"],
-        ["emitted", "native_accept", "accepted"],
-        ["emitted", "transport_error", "failed"],
-        ["emitted", "uncertain_timeout", "unknown_delivery"],
+        ["emitted", "send_call_started", "sending"],
+        ["sending", "native_accept", "accepted"],
+        ["sending", "transport_error", "failed"],
+        ["sending", "uncertain_timeout", "unknown_delivery"],
         ["accepted", "target_receipt", "delivered"],
         ["delivered", "execution_evidence", "executed"],
         ["executed", "new_target_turn", "replied"],
         ["replied", "read_with_cursor", "read"],
         ["deferred", "idle_observed", "emitted"],
-        ["deferred", "unknown_or_disconnected", "failed"]
+        ["queued", "eligibility_observed", "emitted"],
+        ["deferred", "unknown_or_disconnected", "failed"],
+        ["queued", "expired", "expired"],
+        ["deferred", "cancelled", "cancelled"]
       ]
     },
-    "session": {
-      "states": ["idle", "working", "stopping", "disconnected", "unknown"],
-      "gate": {
-        "idle_only": { "idle": "send", "working": "defer", "stopping": "defer", "disconnected": "fail_closed", "unknown": "fail_closed" },
-        "working_allowed": { "idle": "send", "working": "send", "stopping": "defer", "disconnected": "fail_closed", "unknown": "fail_closed" }
-      }
+    "schedule": {
+      "initial": "absent",
+      "states": ["absent", "configured", "enabled", "disabled", "due", "claimed", "deferred_while_working", "send_pending", "sent", "completed", "failed", "cancelled"],
+      "transitions": [
+        ["absent", "upsert", "configured"],
+        ["configured", "enable", "enabled"],
+        ["enabled", "clock_due", "due"],
+        ["enabled", "disable", "disabled"],
+        ["due", "claim", "claimed"],
+        ["claimed", "working", "deferred_while_working"],
+        ["claimed", "send", "send_pending"],
+        ["send_pending", "accepted", "sent"],
+        ["sent", "occurrence_complete", "completed"],
+        ["claimed", "error", "failed"],
+        ["configured", "remove", "cancelled"],
+        ["disabled", "remove", "cancelled"]
+      ]
+    },
+    "operator": {
+      "states": ["inactive", "armed", "triggered", "deferred", "eligible", "completed", "failed"],
+      "transitions": [
+        ["inactive", "enable", "armed"],
+        ["armed", "event_match", "triggered"],
+        ["triggered", "working_gate_closed", "deferred"],
+        ["triggered", "send_gate_open", "eligible"],
+        ["deferred", "send_gate_open", "eligible"],
+        ["eligible", "policy_complete", "completed"],
+        ["triggered", "error", "failed"],
+        ["eligible", "error", "failed"]
+      ],
+      "instances": ["stopless", "update-goal", "timer", "memory", "longhorizon"]
     }
   }
 }

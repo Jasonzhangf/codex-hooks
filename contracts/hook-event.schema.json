@@ -10,12 +10,25 @@
     "turn_id": { "type": ["string", "null"] },
     "hook_event_name": {
       "type": "string",
-      "enum": ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"]
+      "enum": ["SessionStart", "SubagentStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "PreCompact", "PostCompact", "SubagentStop", "Stop", "Interrupt", "SessionEnd"]
     },
     "cwd": { "type": "string", "minLength": 1 },
     "tool_name": { "type": ["string", "null"] },
     "tool_use_id": { "type": ["string", "null"] },
     "event_id": { "type": ["string", "null"] },
-    "stop_hook_active": { "type": "boolean" }
+    "stop_hook_active": { "type": "boolean" },
+    "permission_mode": { "type": ["string", "null"] },
+    "transcript_path": { "type": ["string", "null"] },
+    "model": { "type": ["string", "null"] },
+    "prompt": { "type": ["string", "null"] },
+    "tool_input": {},
+    "tool_response": {},
+    "agent_id": { "type": ["string", "null"] },
+    "agent_type": { "type": ["string", "null"] },
+    "agent_transcript_path": { "type": ["string", "null"] },
+    "last_assistant_message": { "type": ["string", "null"] },
+    "source": { "type": ["string", "null"] },
+    "trigger": { "type": ["string", "null"] },
+    "reason": { "type": ["string", "null"] }
   }
 }

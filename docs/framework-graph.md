@@ -1,7 +1,7 @@
 # RouteCodex Hooks Framework Graph
 
 This is a capability skeleton. It defines the graph and evidence boundaries;
-it does not implement Stopless, scheduling, memory, or goal mutation policy.
+it does not enable Stopless, scheduling, memory, or goal mutation policy.
 
 ## Invariants
 
@@ -116,3 +116,80 @@ The tests prove the local HTTP adapter, daemon status gate, mock codexapp
 port, Stop result shape, deferral/resume, idempotency, and hook-kind
 separation. They do not prove a real TUI/Desktop App Server, plugin trust
 approval, production daemon persistence, or RouteCodex managed startup.
+
+## Lifecycle coverage contract
+
+The graph has one adapter for every official lifecycle event. Events that do
+not produce a message still pass through validation, classification,
+idempotency, and an observe-only decision:
+
+| Official event | Framework kind | Allowed baseline effect |
+| --- | --- | --- |
+| `SessionStart` | `input` | observe; future `additionalContext` projection |
+| `SubagentStart` | `input` | observe child lifecycle |
+| `UserPromptSubmit` | `input` | observe; future `additionalContext` projection |
+| `PreToolUse` | `tool-call` or `update-goal` | observe; future allow/deny/rewrite |
+| `PermissionRequest` | `tool-call` | observe; future allow/deny/decline |
+| `PostToolUse` | `tool-call` or `update-goal` | observe result; never undo side effects |
+| `PreCompact` | `input` | observe before compaction |
+| `PostCompact` | `input` | observe and reconcile |
+| `SubagentStop` | `stop` | observe official stop boundary |
+| `Stop` | `stop` | observe; future independent Stopless policy |
+| `Interrupt` | `lifecycle` | record interruption and reconcile |
+| `SessionEnd` | `lifecycle` | flush durable state and close session |
+
+The baseline has no enabled policy factory for these events. Supplying an
+intent explicitly in a contract test exercises the daemon transport path; it
+does not enable a product operator.
+
+## Complete operator graph
+
+```mermaid
+flowchart LR
+  E[normalized official event] --> O{operator registry}
+  O --> S[StoplessOperator\nindependent state]
+  O --> G[UpdateGoalOperator\nindependent state]
+  O --> T[TimerOperator\nfuture clock state]
+  O --> L[LongHorizonOperator\nfuture checkpoint state]
+  O --> M[MemoryOperator\nextension only]
+  S --> D[typed daemon decision]
+  G --> D
+  T --> D
+  L --> D
+  M --> D
+  D --> Q{running-aware gate}
+  Q -->|working + idle_only| P[deferred/pending]
+  Q -->|idle/waiting/stopped| C[CodexApp.sendmessage]
+  Q -->|working + working_allowed| C
+  Q -->|unknown/disconnected/failed| F[explicit failure]
+  P -->|legal status transition| Q
+  C --> R[accepted or uncertain/failed receipt]
+```
+
+Operator state is namespaced by `operator_id`; the only shared inputs are the
+normalized event, the target status observation, and the transport decision
+contract. In particular, Stopless never reads update-goal state, update-goal
+never reads Stopless counters, and neither operator owns timer or CodexApp
+state.
+
+## State coverage
+
+The machine-readable contract in `contracts/state-machine.json` covers:
+
+- runtime: startup ordering, failed startup, draining and shutdown;
+- session: `idle`, `working`, `waiting_for_input`, `stopping`, `stopped`,
+  `starting`, `disconnected`, `failed`, and `unknown`;
+- hook processing: received, validation, normalization, dispatch, waiting,
+  decision, projection, duplicate, stale, timeout and failure;
+- message: suppressed, queued, deferred, emitted, sending, accepted,
+  delivered, executed, replied, read, failed, uncertain, expired and
+  cancelled;
+- schedule: configured, enabled, due, claimed, deferred while working,
+  pending, sent, completed, failed and cancelled;
+- operator: inactive, armed, triggered, deferred, eligible, completed and
+  failed, instantiated independently for Stopless, update-goal, timer, memory
+  and longhorizon.
+
+The contract deliberately distinguishes a transport acceptance from later
+native evidence. No transition to `delivered`, `executed`, `replied`, or `read`
+is implied by an HTTP response, a log line, a queue insertion, or an MCP read.

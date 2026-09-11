@@ -3,7 +3,11 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 import { HooksDaemon, MemoryStateStore } from "../src/daemon.js";
 import { DaemonHttpServer } from "../src/server.js";
-import { SEND_MODES, normalizeIntent, normalizeTarget } from "../src/protocol.js";
+import { SEND_MODES, normalizeHookEvent, normalizeIntent, normalizeTarget } from "../src/protocol.js";
+import { JsonStateStore } from "../src/persistence.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 function target() {
   return { namespace: "codex_tui", appserver_id: "tui-appserver", session_id: "session-1", thread_id: "thread-1" };
@@ -95,6 +99,22 @@ test("the installed command adapter preserves the official stdin/stdout boundary
   }
 });
 
+test("official stop_hook_active guard prevents intent creation and sending", async () => {
+  let factoryCalls = 0;
+  const codexapp = fakeCodexapp("idle");
+  const daemon = new HooksDaemon({
+    codexapp,
+    intentFactory: async () => {
+      factoryCalls += 1;
+      return intent("must-not-be-created");
+    },
+  });
+  const result = await daemon.handleHook(event("Stop", { event_id: "already-continued", stop_hook_active: true }));
+  assert.equal(result.decision, "guarded");
+  assert.equal(factoryCalls, 0);
+  assert.equal(codexapp.sends.length, 0);
+});
+
 test("idle_only does not disturb a working session and flushes after idle", async () => {
   const codexapp = fakeCodexapp("working");
   const daemon = new HooksDaemon({ codexapp });
@@ -124,6 +144,59 @@ test("working_allowed sends while working, while unknown and disconnected fail c
   const disconnected = await daemon.handleHook(event("PostToolUse", { turn_id: "turn-3", tool_use_id: "tool-3" }), { intent: intent("disconnected-1") });
   assert.equal(disconnected.decision, "fail_closed");
   assert.equal(codexapp.sends.length, 1);
+});
+
+test("waiting_for_input and stopped are send-eligible while starting remains deferred", async () => {
+  const codexapp = fakeCodexapp("waiting_for_input");
+  const daemon = new HooksDaemon({ codexapp });
+  const waiting = await daemon.handleHook(event("Stop", { event_id: "waiting" }), { intent: intent("waiting") });
+  assert.equal(waiting.decision, "sent");
+
+  codexapp.state = "stopped";
+  const stopped = await daemon.handleHook(event("Stop", { event_id: "stopped" }), { intent: intent("stopped") });
+  assert.equal(stopped.decision, "sent");
+
+  codexapp.state = "starting";
+  const starting = await daemon.handleHook(event("Stop", { event_id: "starting" }), { intent: intent("starting") });
+  assert.equal(starting.decision, "deferred");
+  assert.equal(codexapp.sends.length, 2);
+});
+
+test("expired intent is recorded without reading status or sending", async () => {
+  const codexapp = fakeCodexapp("idle");
+  const daemon = new HooksDaemon({ codexapp, now: () => "2026-09-10T12:00:00.000Z" });
+  const result = await daemon.handleHook(event("Stop", { event_id: "expired" }), {
+    intent: { ...intent("expired"), expires_at: "2026-09-10T11:59:59.000Z" },
+  });
+  assert.equal(result.decision, "expired");
+  assert.equal(codexapp.statusCalls, 0);
+  assert.equal(codexapp.sends.length, 0);
+});
+
+test("JSON persistence restores deferred intents and does not resend after acceptance", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-hooks-framework-"));
+  const stateFile = join(directory, "state.json");
+  try {
+    const codexapp = fakeCodexapp("working");
+    const first = new HooksDaemon({ codexapp, store: new JsonStateStore(stateFile) });
+    const deferred = await first.handleHook(event("Stop", { event_id: "persisted" }), {
+      intent: intent("persisted", SEND_MODES.IDLE_ONLY),
+    });
+    assert.equal(deferred.decision, "deferred");
+
+    codexapp.state = "idle";
+    const second = new HooksDaemon({ codexapp, store: new JsonStateStore(stateFile) });
+    const resumed = await second.flushPending(target());
+    assert.equal(resumed.sent.length, 1);
+    assert.equal(codexapp.sends.length, 1);
+
+    const third = new HooksDaemon({ codexapp, store: new JsonStateStore(stateFile) });
+    const replay = await third.flushPending(target());
+    assert.equal(replay.sent.length, 0);
+    assert.equal(codexapp.sends.length, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("deferred resume records unknown status and send failures without claiming delivery", async () => {

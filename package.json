@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/protocol.js && node --check src/daemon.js && node --check src/server.js && node --check src/hook-entry.js && node --check src/orchestrator.js && node --check src/supervisor.js"
+    "check": "node --check src/protocol.js && node --check src/daemon.js && node --check src/server.js && node --check src/hook-entry.js && node --check src/orchestrator.js && node --check src/supervisor.js && node --check src/persistence.js && node --check src/control.js && node --check src/mcp.js && node --check src/cli.js && node --check src/daemon-entry.js && node --check src/codexapp-port.js",
+    "cli": "node src/cli.js",
+    "daemon": "node src/daemon-entry.js"
   },
   "dependencies": {
     "cordis": "4.0.0-rc.10"

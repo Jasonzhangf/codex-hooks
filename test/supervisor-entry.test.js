@@ -16,7 +16,7 @@ const codexappSource = [
   "else if(request.method==='session_status')result={status:{state:'idle'},scopeId:request.params.address.scopeId,namespace:'codex_tui',appserverId:'tui-appserver',address:request.params.address};",
   "else result={messageId:request.params.messageId,attemptId:request.params.attemptId,from:request.params.from,to:request.params.to,routing:{requestedTo:request.params.to,routedTo:request.params.to},state:'accepted'};",
   "client.write(JSON.stringify({id:request.id,result})+'\\n');});});",
-  "server.listen(socket,()=>console.log(JSON.stringify({ready:true})));",
+  "server.listen(socket,()=>console.log(JSON.stringify({bridge:'up',socket})));",
   "process.once('SIGTERM',()=>server.close(()=>process.exit(0)));",
 ].join("");
 

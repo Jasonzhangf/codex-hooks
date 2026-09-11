@@ -45,7 +45,12 @@ process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 
 async function startCodexapp(currentConfig) {
-  const processHandle = await startProcess(currentConfig.supervisor.codexapp, "codexapp", timeoutMs);
+  const processHandle = await startProcess(
+    currentConfig.supervisor.codexapp,
+    "codexapp",
+    timeoutMs,
+    isCodexAppReady,
+  );
   const port = new CodexAppBridgePort(currentConfig.codexapp);
   try {
     await verifyCodexAppPort(port, currentConfig.codexapp.required_capabilities);
@@ -56,13 +61,14 @@ async function startCodexapp(currentConfig) {
   return Object.assign(port, processHandle);
 }
 
-async function startProcess(spec, name, timeout) {
+async function startProcess(spec, name, timeout, readiness = (record) => record?.ready === true) {
   if (!spec?.command) throw new Error(`${name} process command is required`);
   const child = spawn(spec.command, spec.args || [], { stdio: ["ignore", "pipe", "pipe"] });
   try {
     const ready = await readReadyLine(child, name, timeout);
+    if (!readiness(ready)) throw new Error(`${name} did not become ready`);
     return {
-      ready: ready?.ready === true,
+      ready: true,
       pid: child.pid,
       stop: () => stopProcess(child, name, timeout),
     };
@@ -76,6 +82,14 @@ async function startProcess(spec, name, timeout) {
     }
     throw error;
   }
+}
+
+function isCodexAppReady(record) {
+  return record?.ready === true || (
+    record?.bridge === "up" &&
+    typeof record.socket === "string" &&
+    record.socket.trim() !== ""
+  );
 }
 
 function readReadyLine(child, name, timeout) {

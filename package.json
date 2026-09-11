@@ -13,7 +13,8 @@
   },
   "bin": {
     "routecodex-hooks": "src/cli.js",
-    "routecodex-hooks-mcp": "src/mcp-server.js"
+    "routecodex-hooks-mcp": "src/mcp-server.js",
+    "routecodex-hooksd": "src/daemon-entry.js"
   },
   "dependencies": {
     "cordis": "4.0.0-rc.10"

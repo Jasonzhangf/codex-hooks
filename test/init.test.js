@@ -95,6 +95,47 @@ test("init receipt is executable on a clean host through the installed Stop comm
   }
 });
 
+test("installed Stop command reaches a real hooksd process on a clean host", async () => {
+  const codexHome = await mkdtemp(join(tmpdir(), "routecodex-hooks-real-host-"));
+  const binDir = join(codexHome, "bin");
+  const modulePath = join(codexHome, "codexapp-port.mjs");
+  await writeFile(modulePath, "export function createCodexAppPort() { return { capabilities: async () => ['session_status', 'send_message_to_thread'], session_status: async () => ({ state: 'idle' }), send_message: async ({ attempt_id }) => ({ accepted: true, attempt_id }) }; }\n", "utf8");
+  const port = await freePort();
+  let daemon = null;
+  try {
+    const init = await run(process.execPath, ["scripts/init.mjs", "--codex-home", codexHome, "--bin-dir", binDir, "--endpoint", `http://127.0.0.1:${port}`]);
+    assert.equal(init.code, 0, init.stderr);
+    const receipt = JSON.parse(init.stdout);
+    daemon = spawn(process.execPath, ["src/daemon-entry.js", "--config", receipt.daemon_config, "--codexapp-module", modulePath], {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const ready = JSON.parse(await readLine(daemon.stdout));
+    assert.equal(ready.ready, true);
+    assert.equal(ready.endpoint, `http://127.0.0.1:${port}`);
+
+    const hooks = JSON.parse(await readFile(receipt.hooks_file, "utf8"));
+    const command = hooks.hooks.Stop[0].hooks[0].command;
+    const hook = await run("/bin/sh", ["-c", command], {
+      input: JSON.stringify({ hook_event_name: "Stop", session_id: "s1", turn_id: "t1", cwd: "/tmp" }),
+    });
+    assert.equal(hook.code, 0, hook.stderr);
+    assert.deepEqual(JSON.parse(hook.stdout), {});
+
+    const status = await run(receipt.cli_wrapper, ["status"]);
+    assert.equal(status.code, 0, status.stderr);
+    const statusBody = JSON.parse(status.stdout);
+    assert.equal(statusBody.health.ready, true);
+    assert.equal(statusBody.control.protocol, "routecodex-hooks/v1");
+  } finally {
+    if (daemon) {
+      daemon.kill("SIGTERM");
+      await once(daemon, "exit");
+    }
+    await rm(codexHome, { recursive: true, force: true });
+  }
+});
+
 function run(command, args, { input = null, env = process.env } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd: process.cwd(), env, stdio: ["pipe", "pipe", "pipe"] });
@@ -123,5 +164,17 @@ function readLine(stream) {
     };
     stream.on("data", onData);
     stream.once("error", reject);
+  });
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = address.port;
+      server.close((error) => error ? reject(error) : resolve(port));
+    });
   });
 }

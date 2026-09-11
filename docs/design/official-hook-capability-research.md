@@ -2,7 +2,7 @@
 
 Source: [OpenAI ChatGPT Learn — Hooks](https://learn.chatgpt.com/docs/hooks)
 
-Retrieved: 2026-09-10
+Retrieved: 2026-09-11
 
 ## Confirmed lifecycle surface
 
@@ -44,20 +44,28 @@ skipped.
 
 tells Codex to continue and creates a new continuation prompt using `reason`.
 `stop_hook_active` identifies a turn already continued by Stop and is the
-official recursion guard. A Stop hook may also return `continue: false`, but the
-framework does not combine `decision: "block"` with an external
-`codexapp.sendmessage` wake: that would create two continuation mechanisms.
+official recursion guard. This is the official native continuation path.
 
-The framework therefore uses this boundary:
+The common output field `continue: false` means that the current Hook run is
+stopped. It is not a receipt for a message sent through another transport, and
+it can affect how other Stop hook decisions are handled. The framework does
+not use it to acknowledge external injection.
+
+The framework keeps a separate external-wake path:
 
 ```text
 Stop hook -> hooksd policy -> codexapp.sendmessage (when a wake is needed)
-                         -> official Stop output projection
+                         -> ordinary successful Stop output
 ```
 
-The adapter returns `continue: false` only after a send has been accepted. A
-native official Stop continuation remains a separately modeled policy and is
-not enabled by this baseline.
+The external path does not emit `decision: "block"`; that would ask Codex to
+create a second continuation in addition to the queued message. It also does
+not emit `continue: false` as an injection acknowledgment. The official page
+does not establish that `continue: false` means “the separately sent message
+was injected and will execute”. The adapter therefore returns the ordinary
+successful/no-op Hook output until an installed same-entry TUI/Desktop replay
+proves a more specific projection. Native Stop continuation and external
+`sendmessage` are mutually exclusive policy choices.
 
 ## Input and tool semantics
 
@@ -87,4 +95,6 @@ The official page does not make the hook itself the owner of durable timer
 state, Codex running-state observation, cross-process persistence, or native
 TUI/Desktop message transport. Those remain `hooksd` and `codexapp` concerns.
 The framework does not infer those capabilities from hook stdin, transcripts,
-logs, or queue acceptance.
+logs, or queue acceptance. In particular, a successful external send and an
+empty/no-op Stop output are only adapter-level evidence; they are not proof of
+delivery, execution, reply, or read.

@@ -7,7 +7,11 @@ Stopless is a policy that may create a `MessageIntent`; it is not part of the
 framework daemon and is intentionally not implemented in this skeleton.
 
 The Stop hook must respect the official `stop_hook_active` guard. If a policy
-needs to wake the session, the daemon uses `codexapp.sendmessage` and the hook
-returns `{"continue":false}`. It must not combine that send with
+needs to wake the session through the external path, the daemon uses
+`codexapp.sendmessage` and the hook returns ordinary successful output (`{}`).
+Do not use `continue:false` as an injection acknowledgment: officially it
+marks this hook run stopped and is not evidence that the separately sent
+message was delivered or executed. Do not combine the external send with
 `decision:"block"`, because official Stop `decision:"block"` creates its own
-continuation prompt.
+continuation prompt. Native `decision:"block"` is a separate, mutually
+exclusive policy and is not enabled by this skeleton.

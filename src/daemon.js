@@ -223,8 +223,12 @@ export class HooksDaemon {
       assertAcceptedReceipt(native);
       const accepted = this.transition({ ...emitted, native }, DELIVERY.ACCEPTED, { state, native, at: this.now() });
       this.rememberIntent(intent, accepted, "sent");
-      const hookOutput = hookKind === "stop" ? { continue: false } : {};
-      return this.result(event, hookKind, "sent", { delivery: accepted, hook_output: hookOutput });
+      // An external sendmessage wake is not the official Stop continuation
+      // protocol. Do not emit `decision:block` or `continue:false` here:
+      // neither value is a proof that the separately queued message was
+      // delivered or executed. Native Stop continuation is a future,
+      // explicitly selected policy with its own replay evidence.
+      return this.result(event, hookKind, "sent", { delivery: accepted, hook_output: {} });
     } catch (error) {
       if (isUncertainTransportError(error)) {
         const unknown = this.transition(emitted, "unknown_delivery", {

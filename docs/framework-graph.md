@@ -55,7 +55,7 @@ flowchart TD
   S -->|native evidence| T[delivered]
   T --> U[executed / replied / read, only with matching evidence]
   Q --> V{origin is Stop?}
-  V -->|yes| W[return continue:false]
+  V -->|yes| W[return ordinary successful hook output]
   V -->|no| Y[return event-specific official result]
 
   Z[timer or longhorizon clock] --> L
@@ -77,7 +77,7 @@ flowchart TD
 | Daemon → status | codexapp | target → `idle/working/stopping/disconnected/unknown` | observation only | unknown/disconnected is fail closed |
 | Status → send gate | daemon | intent mode + state → send/defer/fail | `created → deferred` or send path | working + `idle_only` never calls send |
 | Daemon → sendmessage | codexapp | target + body + attempt id → native receipt | `emitted → accepted` | exact native error, no silent retry |
-| Stop send → hook result | Stop adapter | accepted send → official JSON | current hook ends | `continue:false`; never add `decision:block` |
+| Stop send → hook result | Stop adapter | accepted send → ordinary official success JSON | current hook ends | `{}`; never claim native continuation |
 | Accepted → delivered | codexapp/daemon | target receipt → native receipt evidence | `accepted → delivered` | acceptance alone remains incomplete |
 | Delivered → reply/read | codexapp/daemon | matching item/turn/cursor → evidence | `delivered → executed → replied → read` | timeout/unchanged cursor/unknown remains incomplete |
 | Timer/longhorizon → intent | daemon policy | due state → intent | `scheduled → due → pending/sent` | no timer feature in this skeleton |
@@ -99,9 +99,11 @@ promoted by a log line, MCP read, or queue insertion alone.
 
 ## Hook separation
 
-- `Stop`: only official Stop continuation boundary. A sent wake message is
-  paired with `continue:false`; official `decision:block` is reserved for an
-  explicitly modeled native continuation policy.
+- `Stop`: external wake and native continuation are separate, mutually
+  exclusive policies. A sent wake message uses `codexapp.sendmessage` and
+  returns ordinary successful/no-op output. Official `decision:block` is
+  reserved for an explicitly modeled native continuation policy; the baseline
+  does not use `continue:false` as an injection acknowledgment.
 - `UserPromptSubmit`/`SessionStart`: input observation/injection boundary.
   Future context injection uses the official `additionalContext` result and is
   not a hidden payload mutation.

@@ -81,13 +81,16 @@ codexapp.
 Internal daemon envelopes never go to official Hook stdout. The command adapter
 projects only the official top-level result:
 
-- successful Stop wake: `{"continue":false}`;
+- successful external Stop wake: ordinary successful/no-op output (`{}`);
 - input injection: official `additionalContext` shape;
 - no intent/deferred: normal no-op output, never `decision:"block"`;
 - daemon/native failure: non-zero command with preserved error.
 
 Stop `decision:"block"` is reserved for a separately modeled native Stop
-continuation. It is not combined with a `sendmessage` wake.
+continuation. It is not combined with a `sendmessage` wake. `continue:false`
+is not used as an external injection acknowledgment because that meaning has
+not been established by official documentation or an installed same-entry
+replay.
 
 ## Policy modules
 

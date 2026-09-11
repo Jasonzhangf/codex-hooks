@@ -37,10 +37,12 @@ reply.
 
 ## Hook rule
 
-The official Stop hook is an adapter. When the daemon has successfully sent a
-wake message, the adapter returns `{"continue":false}`. It does not return
-`decision:"block"` at the same time, because official Stop `decision:"block"`
-creates a separate automatic continuation prompt.
+The official Stop hook is an adapter. When the daemon has successfully sent an
+external wake message, the adapter returns ordinary successful/no-op output.
+It does not return `decision:"block"`, because official Stop `decision:"block"`
+creates a separate automatic continuation prompt. The framework does not use
+`continue:false` as an injection acknowledgment: that meaning is not
+established until an installed same-entry TUI/Desktop replay proves it.
 
 `update_goal` is a separate tool-hook matcher and policy kind. It does not
 share Stopless counters, timer state, or a generic post-turn handler.

@@ -45,7 +45,7 @@ test("message intent source is restricted to registered operators", () => {
   );
 });
 
-test("official Stop input reaches the daemon and wakes through codexapp sendmessage", async () => {
+test("official Stop input wakes through codexapp without claiming native continuation", async () => {
   const codexapp = fakeCodexapp("idle");
   const daemon = new HooksDaemon({ codexapp });
   const server = new DaemonHttpServer(daemon);
@@ -58,7 +58,7 @@ test("official Stop input reaches the daemon and wakes through codexapp sendmess
     });
     const result = await response.json();
     assert.equal(result.decision, "sent");
-    assert.deepEqual(result.hook_output, { continue: false });
+    assert.deepEqual(result.hook_output, {});
     assert.equal(codexapp.sends.length, 1);
     assert.equal(codexapp.sends[0].body, "wake:stop-1");
   } finally {
@@ -92,7 +92,7 @@ test("the installed command adapter preserves the official stdin/stdout boundary
       child.on("close", (exitCode) => resolve({ exitCode, stdout, stderr }));
     });
     assert.equal(childResult.exitCode, 0, childResult.stderr);
-    assert.deepEqual(JSON.parse(childResult.stdout), { continue: false });
+    assert.deepEqual(JSON.parse(childResult.stdout), {});
     assert.equal(codexapp.sends.length, 1);
   } finally {
     await server.close();

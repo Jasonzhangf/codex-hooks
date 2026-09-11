@@ -53,7 +53,11 @@ send. Restart before flush and verify pending recovery without duplicate send.
 
 - official stdin reaches daemon through installed command;
 - stdout contains only official top-level JSON;
-- Stop wake returns `continue:false` and never `decision:block`;
+- external Stop wake returns ordinary successful/no-op output and never
+  `decision:block`;
+- native Stop `decision:block` is a separate, mutually exclusive policy and
+  requires its own installed replay; `continue:false` is not treated as an
+  injection acknowledgment;
 - `stop_hook_active=true` produces no new intent;
 - `tool_use_id` is required for tool idempotency;
 - `update_goal` matcher cannot enter ordinary tool policy;

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { clone } from "./protocol.js";
+import { normalizeLoopbackHost } from "./endpoint.js";
 
 export function loadDaemonConfig(filePath) {
   if (typeof filePath !== "string" || filePath.trim() === "") throw new Error("daemon config path is required");
@@ -18,9 +19,7 @@ export function validateDaemonConfig(value) {
   assertObject(value.runtime, "runtime");
   assertKeys(value.runtime, ["host", "port", "state_directory"], "runtime");
   assertString(value.runtime.host, "runtime.host");
-  if (!["127.0.0.1", "localhost", "::1"].includes(value.runtime.host)) {
-    throw new Error("runtime.host must be loopback-only");
-  }
+  normalizeLoopbackHost(value.runtime.host);
   if (!Number.isInteger(value.runtime.port) || value.runtime.port < 0 || value.runtime.port > 65535) {
     throw new Error("runtime.port must be an integer from 0 to 65535");
   }

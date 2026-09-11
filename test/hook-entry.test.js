@@ -36,3 +36,22 @@ test("hook command exposes daemon delivery failures instead of printing success"
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("hook command rejects a non-loopback endpoint override before sending hook input", async () => {
+  const child = spawn(process.execPath, ["src/hook-entry.js", "--kind", "stop"], {
+    cwd: new URL("..", import.meta.url),
+    env: { ...process.env, ROUTECODEX_HOOKS_ENDPOINT: "http://198.51.100.1:8787" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  child.stdin.end(JSON.stringify({ session_id: "session-1", hook_event_name: "Stop", cwd: "/workspace" }));
+  const [exitCode] = await once(child, "close");
+  assert.notEqual(exitCode, 0);
+  assert.equal(stdout, "");
+  assert.match(stderr, /daemon endpoint must be loopback-only/);
+});

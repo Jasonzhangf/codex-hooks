@@ -8,6 +8,7 @@ import { JsonStateStore } from "./persistence.js";
 import { DaemonHttpServer } from "./server.js";
 import { loadDaemonConfig } from "./config.js";
 import { CodexAppBridgePort, verifyCodexAppPort } from "./codexapp-port.js";
+import { normalizeLoopbackHost } from "./endpoint.js";
 
 const options = parseArgs(process.argv.slice(2));
 const config = options.configPath ? loadDaemonConfig(options.configPath) : null;
@@ -23,7 +24,8 @@ const stateFile = expandHome(options.stateFile || (config ? join(config.runtime.
 const daemon = new HooksDaemon({ codexapp, store: new JsonStateStore(stateFile) });
 const recovered = daemon.recoverOutbox();
 const server = new DaemonHttpServer(daemon);
-const endpoint = await server.listen(options.host || config?.runtime.host || "127.0.0.1", options.port ?? config?.runtime.port ?? 8787);
+const host = normalizeLoopbackHost(options.host || config?.runtime.host || "127.0.0.1");
+const endpoint = await server.listen(host, options.port ?? config?.runtime.port ?? 8787);
 
 process.stdout.write(`${JSON.stringify({ protocol: "routecodex-hooks/v1", ready: true, endpoint, state_file: stateFile, recovered_outbox: recovered.length })}\n`);
 

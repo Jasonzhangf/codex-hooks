@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import { normalizeLoopbackEndpoint } from "./endpoint.js";
 
 const options = parseArgs(process.argv.slice(2));
 const input = await readStdin();
-const endpoint = process.env.ROUTECODEX_HOOKS_ENDPOINT || loadEndpoint(options.config);
+const endpoint = normalizeLoopbackEndpoint(process.env.ROUTECODEX_HOOKS_ENDPOINT || loadEndpoint(options.config)).endpoint;
 const kind = options.kind;
 const response = await fetch(`${endpoint}/v1/hooks/dispatch`, {
   method: "POST",

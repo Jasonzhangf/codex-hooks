@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import { McpStateClient } from "./mcp.js";
 import { readInstallRecord, setStopHookEnabled, writeInstallRecord } from "./install.js";
+import { normalizeLoopbackEndpoint } from "./endpoint.js";
 
 const endpoint = process.env.ROUTECODEX_HOOKS_ENDPOINT || null;
 const [operation, ...args] = process.argv.slice(2);
@@ -48,11 +49,10 @@ async function mutate(value) {
 function setConfig(record, key, value) {
   const daemon = readJson(record.daemon_config);
   if (key === "endpoint") {
-    const url = normalizeEndpoint(value);
-    record.endpoint = url;
-    const parsed = new URL(url);
-    daemon.runtime.host = parsed.hostname;
-    daemon.runtime.port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+    const parsed = normalizeLoopbackEndpoint(value);
+    record.endpoint = parsed.endpoint;
+    daemon.runtime.host = parsed.host;
+    daemon.runtime.port = parsed.port;
   } else if (key === "codexapp_socket") {
     daemon.codexapp.socket = value;
   } else if (key === "source_scope") {
@@ -89,10 +89,7 @@ function tryReadInstallRecord() {
 }
 
 function normalizeEndpoint(value) {
-  const url = new URL(value);
-  if (!["http:", "https:"].includes(url.protocol) || url.pathname !== "/" || url.search || url.hash) throw new Error("daemon endpoint must be an http(s) origin");
-  if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) throw new Error("daemon endpoint must use a loopback host");
-  return value.replace(/\/$/, "");
+  return normalizeLoopbackEndpoint(value).endpoint;
 }
 
 function print(value) {

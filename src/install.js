@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { normalizeLoopbackEndpoint } from "./endpoint.js";
 
 export const INSTALL_SCHEMA_VERSION = 1;
 export const INSTALL_DIRNAME = "routecodex-hooks";
@@ -39,6 +40,7 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
   if (typeof sourceRoot !== "string" || sourceRoot.trim() === "") throw new Error("source root is required");
   const source = resolve(sourceRoot);
   const paths = installPaths({ codexHome, binDir });
+  const normalizedEndpoint = normalizeLoopbackEndpoint(endpoint);
   const previous = tryRead(paths.installRecord);
   const managedCommands = previous?.managed_hook_commands || [];
   const hookCommand = `${shellQuote(process.execPath)} ${shellQuote(join(paths.sourceDirectory, "hook-entry.js"))} --config ${shellQuote(paths.installRecord)} --kind stop`;
@@ -51,7 +53,7 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
   ensureDirectory(paths.stateDirectory);
   ensureDirectory(paths.binDirectory);
 
-  const daemonConfig = buildDaemonConfig({ paths, endpoint, previous: readJsonIfExists(previous?.daemon_config) });
+  const daemonConfig = buildDaemonConfig({ paths, endpoint: normalizedEndpoint, previous: readJsonIfExists(previous?.daemon_config) });
   writeJson(paths.daemonConfig, daemonConfig);
   writeExecutable(paths.cliWrapper, wrapperSource(paths.sourceDirectory, "cli.js", paths.installRecord));
   writeExecutable(paths.mcpWrapper, wrapperSource(paths.sourceDirectory, "mcp-server.js", paths.installRecord));
@@ -71,7 +73,7 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
     hooks_file: paths.hooksFile,
     daemon_config: paths.daemonConfig,
     state_directory: paths.stateDirectory,
-    endpoint: normalizeEndpoint(endpoint),
+    endpoint: normalizedEndpoint.endpoint,
     stop_hook_enabled: stopHookEnabled,
     managed_hook_commands: [hookCommand],
     bin_directory: paths.binDirectory,
@@ -107,12 +109,12 @@ export function recordPath(record) {
 }
 
 function buildDaemonConfig({ paths, endpoint, previous }) {
-  const url = new URL(normalizeEndpoint(endpoint));
+  const normalized = typeof endpoint === "string" ? normalizeLoopbackEndpoint(endpoint) : endpoint;
   const old = previous && typeof previous === "object" ? previous : {};
   return {
     runtime: {
-      host: canonicalLoopbackHost(url.hostname),
-      port: Number(url.port || (url.protocol === "https:" ? 443 : 80)),
+      host: normalized.host,
+      port: normalized.port,
       state_directory: paths.stateDirectory,
     },
     codexapp: {
@@ -126,10 +128,6 @@ function buildDaemonConfig({ paths, endpoint, previous }) {
     },
     policies: old.policies || [],
   };
-}
-
-function canonicalLoopbackHost(host) {
-  return host === "[::1]" ? "::1" : host;
 }
 
 function addStopHook(config, command) {
@@ -188,16 +186,4 @@ function readJsonIfExists(path) {
 
 function tryRead(path) {
   try { return readJsonIfExists(path); } catch { return null; }
-}
-
-function normalizeEndpoint(value) {
-  if (typeof value !== "string" || value.trim() === "") throw new Error("daemon endpoint is required");
-  const url = new URL(value);
-  if (!["http:", "https:"].includes(url.protocol) || url.pathname !== "/" || url.search || url.hash) {
-    throw new Error("daemon endpoint must be an http(s) origin");
-  }
-  if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) {
-    throw new Error("daemon endpoint must use a loopback host");
-  }
-  return value.replace(/\/$/, "");
 }

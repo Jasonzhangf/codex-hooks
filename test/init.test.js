@@ -51,6 +51,9 @@ test("init canonicalizes IPv6 loopback endpoint before daemon config validation"
     const config = loadDaemonConfig(record.daemon_config);
     assert.equal(config.runtime.host, "::1");
     assert.equal(config.runtime.port, 8787);
+    const configured = await run(record.cli_wrapper, ["config-set", "endpoint", "http://[::1]:8787"]);
+    assert.equal(configured.code, 0, configured.stderr);
+    assert.equal(loadDaemonConfig(record.daemon_config).runtime.host, "::1");
   } finally {
     await rm(codexHome, { recursive: true, force: true });
   }

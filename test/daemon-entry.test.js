@@ -41,6 +41,26 @@ test("daemon entry requires and loads a real typed codexapp module", async () =>
   }
 });
 
+test("daemon entry rejects a non-loopback host override", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-hooks-host-"));
+  const modulePath = join(directory, "codexapp.mjs");
+  const configPath = join(directory, "hooksd.json");
+  await writeFile(modulePath, "export function createCodexAppPort() { return { capabilities: async () => ['session_status', 'send_message_to_thread'], session_status: async () => ({ state: 'idle' }), send_message: async ({ attempt_id }) => ({ accepted: true, attempt_id }) }; }\n", "utf8");
+  await writeFile(configPath, JSON.stringify({
+    runtime: { host: "127.0.0.1", port: 0, state_directory: directory },
+    codexapp: { socket: join(directory, "codexapp.sock"), required_capabilities: ["session_status", "send_message_to_thread"], source_address: { scopeId: "hooks", sessionId: "hooksd" }, target_scopes: {} },
+    policies: [],
+  }), "utf8");
+  const child = spawn(process.execPath, ["src/daemon-entry.js", "--config", configPath, "--codexapp-module", modulePath, "--host", "0.0.0.0"], { cwd: new URL("..", import.meta.url), stdio: ["ignore", "pipe", "pipe"] });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [exitCode] = await once(child, "close");
+  await rm(directory, { recursive: true, force: true });
+  assert.notEqual(exitCode, 0);
+  assert.match(stderr, /runtime\.host must be loopback-only/);
+});
+
 function readLine(stream) {
   return new Promise((resolve, reject) => {
     let buffer = "";

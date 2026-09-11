@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 import { HooksDaemon, MemoryStateStore } from "../src/daemon.js";
 import { DaemonHttpServer } from "../src/server.js";
-import { SEND_MODES, normalizeHookEvent, normalizeIntent, normalizeTarget } from "../src/protocol.js";
+import { SEND_MODES, SESSION_STATES, normalizeHookEvent, normalizeIntent, normalizeTarget } from "../src/protocol.js";
 import { JsonStateStore } from "../src/persistence.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -160,6 +160,33 @@ test("waiting_for_input and stopped are send-eligible while starting remains def
   const starting = await daemon.handleHook(event("Stop", { event_id: "starting" }), { intent: intent("starting") });
   assert.equal(starting.decision, "deferred");
   assert.equal(codexapp.sends.length, 2);
+});
+
+test("daemon gate executes every session state and send mode in the graph", async () => {
+  const expected = {
+    idle: "sent",
+    working: { [SEND_MODES.IDLE_ONLY]: "deferred", [SEND_MODES.WORKING_ALLOWED]: "sent" },
+    waiting_for_input: "sent",
+    stopping: "deferred",
+    stopped: "sent",
+    starting: "deferred",
+    disconnected: "fail_closed",
+    failed: "fail_closed",
+    unknown: "fail_closed",
+  };
+
+  for (const state of SESSION_STATES) {
+    for (const mode of Object.values(SEND_MODES)) {
+      const codexapp = fakeCodexapp(state);
+      const daemon = new HooksDaemon({ codexapp });
+      const result = await daemon.handleHook(event("Stop", { event_id: `gate-${state}-${mode}` }), {
+        intent: intent(`gate-${state}-${mode}`, mode),
+      });
+      const expectedDecision = typeof expected[state] === "string" ? expected[state] : expected[state][mode];
+      assert.equal(result.decision, expectedDecision, `${state}/${mode}`);
+      assert.equal(codexapp.sends.length, expectedDecision === "sent" ? 1 : 0, `${state}/${mode} send count`);
+    }
+  }
 });
 
 test("expired intent is recorded without reading status or sending", async () => {

@@ -35,15 +35,18 @@ explicit failures or incomplete states.
 
 ## Status gate matrix
 
-Run all ten combinations of five statuses and two send modes. Assert actual
-codexapp `sendmessage` call count:
+Run all 18 combinations of nine session states and two send modes. Assert
+actual codexapp `sendmessage` call count:
 
 ```text
 idle + either mode                 => one send
 working + idle_only                => zero sends, pending persisted
 working + working_allowed           => one send
 stopping + either mode              => zero sends, pending persisted
-unknown/disconnected + either mode  => zero sends, fail_closed
+waiting_for_input + either mode     => one send
+stopped + either mode               => one send
+starting + either mode              => zero sends, pending persisted
+unknown/disconnected/failed + either mode => zero sends, fail_closed
 ```
 
 After a deferred item, produce a real status transition to idle and verify one

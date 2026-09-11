@@ -74,7 +74,7 @@ flowchart TD
 | Daemon → codexapp | RouteCodex lifecycle | typed app-server target → capabilities | `connecting → capable` | namespace/appserver mismatch or unsupported capability |
 | Official event → adapter | hook adapter | stdin JSON → validated event | `received → classified` | malformed/unknown event; no daemon mutation |
 | Adapter → daemon | daemon RPC | event + optional intent → decision | event key recorded exactly once | duplicate returns recorded result |
-| Daemon → status | codexapp | target → `idle/working/stopping/disconnected/unknown` | observation only | unknown/disconnected is fail closed |
+| Daemon → status | codexapp | target → all nine normalized session states | observation only | unknown/disconnected/failed is fail closed |
 | Status → send gate | daemon | intent mode + state → send/defer/fail | `created → deferred` or send path | working + `idle_only` never calls send |
 | Daemon → sendmessage | codexapp | target + body + attempt id → native receipt | `emitted → accepted` | exact native error, no silent retry |
 | Stop send → hook result | Stop adapter | accepted send → ordinary official success JSON | current hook ends | `{}`; never claim native continuation |
@@ -90,8 +90,12 @@ flowchart TD
 | --- | --- | --- |
 | `idle` | send | send |
 | `working` | defer, do not call `sendmessage` | send |
+| `waiting_for_input` | send | send |
 | `stopping` | defer until a legal idle observation | defer until a legal idle observation |
+| `stopped` | send | send |
+| `starting` | defer until a legal idle observation | defer until a legal idle observation |
 | `disconnected` | fail closed | fail closed |
+| `failed` | fail closed | fail closed |
 | `unknown` | fail closed | fail closed |
 
 `deferred` is not `accepted`; `accepted` is not `delivered`; and no state is

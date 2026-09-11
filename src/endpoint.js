@@ -7,8 +7,8 @@ export function normalizeLoopbackEndpoint(value, label = "daemon endpoint") {
   } catch (error) {
     throw new Error(`${label} must be an http(s) origin: ${error.message}`);
   }
-  if (!["http:", "https:"].includes(url.protocol) || url.pathname !== "/" || url.search || url.hash) {
-    throw new Error(`${label} must be an http(s) origin`);
+  if (url.protocol !== "http:" || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error(`${label} must be an http origin`);
   }
   const host = normalizeLoopbackHost(url.hostname, label);
   return {

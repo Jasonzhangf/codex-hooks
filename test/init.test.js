@@ -16,6 +16,7 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
   const unrelated = { hooks: { Stop: [{ hooks: [{ type: "command", command: "unrelated-stop" }] }] } };
   await writeFile(join(codexHome, "hooks.json"), `${JSON.stringify(unrelated)}\n`, "utf8");
   try {
+    assert.throws(() => installFromSource({ sourceRoot: process.cwd(), codexHome, binDir, endpoint: "https://127.0.0.1:9876" }), /daemon endpoint must be an http origin/);
     const first = installFromSource({ sourceRoot: process.cwd(), codexHome, binDir, endpoint: "http://127.0.0.1:9876" });
     assert.equal(first.stop_hook_enabled, true);
     assert.equal(fs.existsSync(join(first.source_directory, "hook-entry.js")), true);

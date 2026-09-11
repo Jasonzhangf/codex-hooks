@@ -15,7 +15,7 @@ export function loadDaemonConfig(filePath) {
 
 export function validateDaemonConfig(value) {
   assertObject(value, "daemon config");
-  assertKeys(value, ["runtime", "codexapp", "policies"], "daemon config");
+  assertKeys(value, ["runtime", "codexapp", "policies"], "daemon config", ["supervisor"]);
   assertObject(value.runtime, "runtime");
   assertKeys(value.runtime, ["host", "port", "state_directory"], "runtime");
   assertString(value.runtime.host, "runtime.host");
@@ -39,6 +39,8 @@ export function validateDaemonConfig(value) {
   assertObject(value.codexapp.target_scopes, "codexapp.target_scopes");
   for (const [key, scopeId] of Object.entries(value.codexapp.target_scopes)) assertString(scopeId, `codexapp.target_scopes.${key}`);
 
+  if (value.supervisor !== undefined) validateSupervisorConfig(value.supervisor);
+
   if (!Array.isArray(value.policies)) throw new Error("policies must be an array");
   const names = new Set();
   value.policies.forEach((policy, index) => {
@@ -53,12 +55,31 @@ export function validateDaemonConfig(value) {
   return clone(value);
 }
 
+function validateSupervisorConfig(value) {
+  assertObject(value, "supervisor");
+  assertKeys(value, ["enabled", "startup_timeout_ms", "codexapp", "hooksd"], "supervisor");
+  if (typeof value.enabled !== "boolean") throw new Error("supervisor.enabled must be boolean");
+  if (!Number.isInteger(value.startup_timeout_ms) || value.startup_timeout_ms < 1 || value.startup_timeout_ms > 120000) {
+    throw new Error("supervisor.startup_timeout_ms must be an integer from 1 to 120000");
+  }
+  validateProcessSpec(value.codexapp, "supervisor.codexapp");
+  validateProcessSpec(value.hooksd, "supervisor.hooksd");
+  if (value.enabled && !value.codexapp.command) throw new Error("supervisor.codexapp.command is required when supervisor is enabled");
+}
+
+function validateProcessSpec(value, name) {
+  assertObject(value, name);
+  assertKeys(value, ["command", "args"], name);
+  if (value.command !== null && typeof value.command !== "string") throw new Error(`${name}.command must be a string or null`);
+  if (!Array.isArray(value.args) || value.args.some((entry) => typeof entry !== "string")) throw new Error(`${name}.args must be an array of strings`);
+}
+
 function assertObject(value, name) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${name} must be an object`);
 }
 
-function assertKeys(value, keys, name) {
-  const allowed = new Set(keys);
+function assertKeys(value, keys, name, optional = []) {
+  const allowed = new Set([...keys, ...optional]);
   for (const key of Object.keys(value)) if (!allowed.has(key)) throw new Error(`${name} has unsupported field: ${key}`);
   for (const key of keys) if (!Object.hasOwn(value, key)) throw new Error(`${name}.${key} is required`);
 }

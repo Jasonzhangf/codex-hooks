@@ -21,6 +21,8 @@ if (operation === "config-show") {
   const hook = required(args[0], "hook name");
   if (hook !== "stop") throw new Error(`unsupported hook: ${hook}`);
   print(setStopHookEnabled(readInstallRecord(), operation === "hook-enable"));
+} else if (operation === "supervisor-enable" || operation === "supervisor-disable") {
+  print(setSupervisorEnabled(readInstallRecord(), operation === "supervisor-enable"));
 } else if (operation === "status") {
   const record = readInstallRecord();
   print(await new McpStateClient(normalizeEndpoint(endpoint || record.endpoint)).queryStatus());
@@ -34,7 +36,7 @@ if (operation === "config-show") {
 } else if (operation === "schedule-pause" || operation === "schedule-resume") {
   await mutate({ operation: operation === "schedule-pause" ? "schedule.pause" : "schedule.resume", id: required(args[0], "schedule id") });
 } else {
-  throw new Error("usage: config-show | config-set <endpoint|codexapp_socket|source_scope|source_session|target_scope> <value> | hook-enable|hook-disable stop | status | operator-enable|operator-disable <name> | schedule-upsert <id> <at> <body> <target-json> [idle_only|working_allowed] | schedule-pause|schedule-resume|schedule-remove <id>");
+  throw new Error("usage: config-show | config-set <endpoint|codexapp_socket|source_scope|source_session|target_scope|codexapp_command|codexapp_args> <value> | hook-enable|hook-disable stop | supervisor-enable|supervisor-disable | status | operator-enable|operator-disable <name> | schedule-upsert <id> <at> <body> <target-json> [idle_only|working_allowed] | schedule-pause|schedule-resume|schedule-remove <id>");
 }
 
 async function mutate(value) {
@@ -63,12 +65,27 @@ function setConfig(record, key, value) {
     const separator = value.indexOf("=");
     if (separator <= 0 || separator === value.length - 1) throw new Error("target_scope must be <namespace/appserver>=<scope-id>");
     daemon.codexapp.target_scopes[value.slice(0, separator)] = value.slice(separator + 1);
+  } else if (key === "codexapp_command") {
+    daemon.supervisor.codexapp.command = value;
+  } else if (key === "codexapp_args") {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed) || parsed.some((entry) => typeof entry !== "string")) throw new Error("codexapp_args must be a JSON string array");
+    daemon.supervisor.codexapp.args = parsed;
   } else {
     throw new Error(`unsupported config key: ${key}`);
   }
   fs.writeFileSync(record.daemon_config, `${JSON.stringify(daemon, null, 2)}\n`, "utf8");
   writeInstallRecord(record);
   return { key, value, install: record, daemon };
+}
+
+function setSupervisorEnabled(record, enabled) {
+  const daemon = readJson(record.daemon_config);
+  daemon.supervisor.enabled = enabled;
+  fs.writeFileSync(record.daemon_config, `${JSON.stringify(daemon, null, 2)}\n`, "utf8");
+  const updated = { ...record, supervisor_enabled: enabled };
+  writeInstallRecord(updated);
+  return { enabled, install: updated, daemon };
 }
 
 function parseTarget(value) {

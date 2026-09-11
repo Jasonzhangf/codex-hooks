@@ -33,6 +33,20 @@ RouteCodex lifecycle supervisor. It must be started with a real CodexApp port
 module or the configured local bridge; a missing or unverifiable CodexApp port
 is a startup failure, not a ready state.
 
+For RouteCodex-managed startup, configure the local CodexApp daemon command
+and enable routecodex-hooks-supervisor; its order is CodexApp ready → hooksd
+ready, and its shutdown order is hooksd → CodexApp.
+
+    routecodex-hooks config-set codexapp_command /absolute/path/to/codex-comm
+    routecodex-hooks config-set codexapp_args '["daemon","start","--socket","/absolute/path/to/commd.sock"]'
+    routecodex-hooks supervisor-enable
+
 An external `codexapp.sendmessage` wake and official Stop `decision: "block"` are mutually exclusive. The external path returns ordinary successful hook output and does not claim delivery or execution. Do not use `continue: false` as delivery evidence. A non-zero hook exit means the daemon rejected or could not safely process the event.
 
-This framework currently supplies boundaries and probes; Stopless, scheduling policy, update-goal mutation, memory behavior, and RouteCodex-managed sidecar startup are not claimed as implemented by the skeleton.
+This framework implements the official Stop hook path, daemon state/persistence
+boundaries, CodexApp bridge contract, CLI configuration/switch controls, MCP
+read-only status, and the deterministic timer state-machine skeleton. Stopless
+policy, update-goal mutation, memory behavior, and real TUI/Desktop delivery
+remain contract-only. RouteCodex-managed sidecar startup is implemented by the
+RouteCodex lifecycle integration; the hooks repository's tests do not replace
+RouteCodex live lifecycle evidence.

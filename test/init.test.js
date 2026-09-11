@@ -25,11 +25,13 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
     assert.equal(fs.statSync(first.cli_wrapper).mode & 0o111, 0o111);
     assert.equal(fs.statSync(first.mcp_wrapper).mode & 0o111, 0o111);
     assert.equal(fs.statSync(first.daemon_wrapper).mode & 0o111, 0o111);
+    assert.equal(fs.statSync(first.supervisor_wrapper).mode & 0o111, 0o111);
     assert.equal(
       await readFile(join(first.skills_directory, "routecodex-hooks", "SKILL.md"), "utf8"),
       await readFile(join(process.cwd(), "skills", "routecodex-hooks", "SKILL.md"), "utf8"),
     );
     assert.equal((await readFile(first.cli_wrapper, "utf8")).includes(first.source_directory), true);
+    assert.equal(loadDaemonConfig(first.daemon_config).supervisor.enabled, false);
 
     const hooksAfterFirst = JSON.parse(await readFile(first.hooks_file, "utf8"));
     assert.equal(hooksAfterFirst.hooks.Stop.length, 2);

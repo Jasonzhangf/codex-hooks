@@ -25,6 +25,7 @@ export function installPaths({ codexHome = join(homedir(), ".codex"), binDir = j
     cliWrapper: join(resolve(binDir), "routecodex-hooks"),
     mcpWrapper: join(resolve(binDir), "routecodex-hooks-mcp"),
     daemonWrapper: join(resolve(binDir), "routecodex-hooksd"),
+    supervisorWrapper: join(resolve(binDir), "routecodex-hooks-supervisor"),
   };
 }
 
@@ -37,7 +38,7 @@ export function readInstallRecord({ codexHome, installRecord } = {}) {
   }
 }
 
-export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "http://127.0.0.1:8787", stopHookEnabled = true } = {}) {
+export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "http://127.0.0.1:8787", stopHookEnabled = true, supervisorEnabled, codexappCommand, codexappArgs } = {}) {
   if (typeof sourceRoot !== "string" || sourceRoot.trim() === "") throw new Error("source root is required");
   const source = resolve(sourceRoot);
   const paths = installPaths({ codexHome, binDir });
@@ -54,11 +55,12 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
   ensureDirectory(paths.stateDirectory);
   ensureDirectory(paths.binDirectory);
 
-  const daemonConfig = buildDaemonConfig({ paths, endpoint: normalizedEndpoint, previous: readJsonIfExists(previous?.daemon_config) });
+  const daemonConfig = buildDaemonConfig({ paths, endpoint: normalizedEndpoint, previous: readJsonIfExists(previous?.daemon_config), supervisorEnabled, codexappCommand, codexappArgs });
   writeJson(paths.daemonConfig, daemonConfig);
   writeExecutable(paths.cliWrapper, wrapperSource(paths.sourceDirectory, "cli.js", paths.installRecord));
   writeExecutable(paths.mcpWrapper, wrapperSource(paths.sourceDirectory, "mcp-server.js", paths.installRecord));
   writeExecutable(paths.daemonWrapper, wrapperSource(paths.sourceDirectory, "daemon-entry.js", paths.installRecord));
+  writeExecutable(paths.supervisorWrapper, wrapperSource(paths.sourceDirectory, "supervisor-entry.js", paths.installRecord));
 
   const hookConfig = readJsonIfExists(paths.hooksFile) || {};
   removeManagedHooks(hookConfig, [...managedCommands, hookCommand]);
@@ -82,6 +84,8 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
     cli_wrapper: paths.cliWrapper,
     mcp_wrapper: paths.mcpWrapper,
     daemon_wrapper: paths.daemonWrapper,
+    supervisor_wrapper: paths.supervisorWrapper,
+    supervisor_enabled: daemonConfig.supervisor.enabled,
     initialized_at: new Date().toISOString(),
   };
   writeJson(paths.installRecord, record);
@@ -111,9 +115,23 @@ export function recordPath(record) {
   return join(record.install_root, "install.json");
 }
 
-function buildDaemonConfig({ paths, endpoint, previous }) {
+function buildDaemonConfig({ paths, endpoint, previous, supervisorEnabled, codexappCommand, codexappArgs }) {
   const normalized = typeof endpoint === "string" ? normalizeLoopbackEndpoint(endpoint) : endpoint;
   const old = previous && typeof previous === "object" ? previous : {};
+  const oldSupervisor = old.supervisor && typeof old.supervisor === "object" ? old.supervisor : {};
+  const oldCodexappProcess = oldSupervisor.codexapp && typeof oldSupervisor.codexapp === "object" ? oldSupervisor.codexapp : {};
+  const supervisor = {
+    enabled: supervisorEnabled ?? oldSupervisor.enabled ?? false,
+    startup_timeout_ms: oldSupervisor.startup_timeout_ms || 10000,
+    codexapp: {
+      command: codexappCommand ?? oldCodexappProcess.command ?? null,
+      args: codexappArgs ?? oldCodexappProcess.args ?? [],
+    },
+    hooksd: {
+      command: oldSupervisor.hooksd?.command || paths.daemonWrapper,
+      args: oldSupervisor.hooksd?.args || ["--config", paths.daemonConfig],
+    },
+  };
   return {
     runtime: {
       host: normalized.host,
@@ -130,6 +148,7 @@ function buildDaemonConfig({ paths, endpoint, previous }) {
       },
     },
     policies: old.policies || [],
+    supervisor,
   };
 }
 

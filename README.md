@@ -49,6 +49,20 @@ share Stopless counters, timer state, or a generic post-turn handler.
 
 ## Local verification
 
+To let routecodex start own the complete sidecar order, configure the local
+CodexApp daemon command and enable the supervisor. The supervisor starts
+CodexApp, verifies its advertised bridge and registered identities, then starts
+hooksd; shutdown is always hooksd first and CodexApp second.
+
+    routecodex-hooks config-set codexapp_command /absolute/path/to/codex-comm
+    routecodex-hooks config-set codexapp_args '["daemon","start","--socket","/absolute/path/to/commd.sock"]'
+    routecodex-hooks supervisor-enable
+
+The installed supervisor entry is routecodex-hooks-supervisor --config
+~/.codex/routecodex-hooks/config/hooksd.json. It is a process supervisor only;
+operator state remains in hooksd and native TUI/Desktop communication remains
+in CodexApp.
+
 ## Local installation
 
 The installation source is this checkout. On a new host, run:

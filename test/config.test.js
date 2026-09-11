@@ -39,5 +39,17 @@ test("daemon config rejects non-loopback control binding", () => {
       target_scopes: {},
     },
     policies: [],
-  }), /runtime\.host must be loopback-only/);
+}), /runtime\.host must be loopback-only/);
+});
+
+test("daemon config validates the explicit process supervisor contract", () => {
+  const supervisor = {
+    enabled: true,
+    startup_timeout_ms: 1000,
+    codexapp: { command: "/usr/bin/node", args: ["codexapp.js"] },
+    hooksd: { command: "/usr/local/bin/routecodex-hooksd", args: ["--config", "hooksd.json"] },
+  };
+  assert.deepEqual(validateDaemonConfig({ ...valid, supervisor }).supervisor, supervisor);
+  assert.throws(() => validateDaemonConfig({ ...valid, supervisor: { ...supervisor, codexapp: { ...supervisor.codexapp, command: null } } }), /command is required/);
+  assert.throws(() => validateDaemonConfig({ ...valid, supervisor: { ...supervisor, startup_timeout_ms: 0 } }), /startup_timeout_ms/);
 });

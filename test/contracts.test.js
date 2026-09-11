@@ -53,4 +53,9 @@ test("every declared state-machine edge has declared source and destination stat
 test("manifest reaches every protocol hook event", async () => {
   const manifest = await readJson("../hooks/hooks.json");
   for (const event of HOOK_EVENTS) assert.ok(manifest.hooks[event], `missing adapter: ${event}`);
+  for (const entries of Object.values(manifest.hooks)) {
+    for (const entry of entries) {
+      for (const hook of entry.hooks) assert.match(hook.command, /--config \"\$HOME\/\.codex\/routecodex-hooks\/install\.json\"/);
+    }
+  }
 });

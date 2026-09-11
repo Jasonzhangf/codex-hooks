@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\"",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\"",
             "timeout": 10
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\"",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\"",
             "timeout": 10
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\"",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\"",
             "timeout": 10
           }
         ]
@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --kind tool-call",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\" --kind tool-call",
             "timeout": 10
           }
         ]
@@ -50,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --kind update-goal",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\" --kind update-goal",
             "timeout": 10
           }
         ]
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --kind tool-call",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\" --kind tool-call",
             "timeout": 10
           }
         ]
@@ -74,7 +74,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --kind tool-call",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\" --kind tool-call",
             "timeout": 10
           }
         ]
@@ -84,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --kind update-goal",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\" --kind update-goal",
             "timeout": 10
           }
         ]
@@ -95,7 +95,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\"",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\"",
             "timeout": 10
           }
         ]
@@ -106,7 +106,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\"",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\"",
             "timeout": 10
           }
         ]
@@ -117,7 +117,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --kind stop",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\" --kind stop",
             "timeout": 10
           }
         ]
@@ -128,7 +128,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --kind stop",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\" --kind stop",
             "timeout": 10
           }
         ]
@@ -139,7 +139,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\"",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\"",
             "timeout": 3
           }
         ]
@@ -150,7 +150,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\"",
+            "command": "node \"$PLUGIN_ROOT/src/hook-entry.js\" --config \"$HOME/.codex/routecodex-hooks/install.json\"",
             "timeout": 3
           }
         ]

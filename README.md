@@ -64,6 +64,11 @@ registers the managed official Stop hook in `~/.codex/hooks.json`. It does not
 overwrite unrelated hook entries and can be repeated safely. For an isolated
 installation, pass `--codex-home`, `--bin-dir`, and `--endpoint`.
 
+Bundled plugin hooks resolve the same default install record at
+`~/.codex/routecodex-hooks/install.json`; run `npm run init` before enabling
+the plugin hook manifest. The installed managed Stop hook passes its own
+install record explicitly, including for isolated `--codex-home` installs.
+
 The installed CLI owns configuration and switches:
 
 ```bash

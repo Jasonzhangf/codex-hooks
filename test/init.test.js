@@ -19,10 +19,16 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
     assert.throws(() => installFromSource({ sourceRoot: process.cwd(), codexHome, binDir, endpoint: "https://127.0.0.1:9876" }), /daemon endpoint must be an http origin/);
     const first = installFromSource({ sourceRoot: process.cwd(), codexHome, binDir, endpoint: "http://127.0.0.1:9876" });
     assert.equal(first.stop_hook_enabled, true);
+    assert.equal(first.source_root, process.cwd());
     assert.equal(fs.existsSync(join(first.source_directory, "hook-entry.js")), true);
     assert.equal(fs.existsSync(join(first.skills_directory, "routecodex-hooks", "SKILL.md")), true);
     assert.equal(fs.statSync(first.cli_wrapper).mode & 0o111, 0o111);
     assert.equal(fs.statSync(first.mcp_wrapper).mode & 0o111, 0o111);
+    assert.equal(
+      await readFile(join(first.skills_directory, "routecodex-hooks", "SKILL.md"), "utf8"),
+      await readFile(join(process.cwd(), "skills", "routecodex-hooks", "SKILL.md"), "utf8"),
+    );
+    assert.equal((await readFile(first.cli_wrapper, "utf8")).includes(first.source_directory), true);
 
     const hooksAfterFirst = JSON.parse(await readFile(first.hooks_file, "utf8"));
     assert.equal(hooksAfterFirst.hooks.Stop.length, 2);

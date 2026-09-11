@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { installFromSource, readInstallRecord, setStopHookEnabled } from "../src/install.js";
+import { loadDaemonConfig } from "../src/config.js";
 
 test("init installs local source, skills, wrappers, and one managed Stop hook idempotently", async () => {
   const codexHome = await mkdtemp(join(tmpdir(), "routecodex-hooks-home-"));
@@ -38,6 +39,18 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
     assert.equal(enabled.stop_hook_enabled, true);
     const hooksEnabled = JSON.parse(await readFile(second.hooks_file, "utf8"));
     assert.equal(hooksEnabled.hooks.Stop.length, 2);
+  } finally {
+    await rm(codexHome, { recursive: true, force: true });
+  }
+});
+
+test("init canonicalizes IPv6 loopback endpoint before daemon config validation", async () => {
+  const codexHome = await mkdtemp(join(tmpdir(), "routecodex-hooks-ipv6-"));
+  try {
+    const record = installFromSource({ sourceRoot: process.cwd(), codexHome, binDir: join(codexHome, "bin"), endpoint: "http://[::1]:8787" });
+    const config = loadDaemonConfig(record.daemon_config);
+    assert.equal(config.runtime.host, "::1");
+    assert.equal(config.runtime.port, 8787);
   } finally {
     await rm(codexHome, { recursive: true, force: true });
   }

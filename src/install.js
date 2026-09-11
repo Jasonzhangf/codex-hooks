@@ -111,7 +111,7 @@ function buildDaemonConfig({ paths, endpoint, previous }) {
   const old = previous && typeof previous === "object" ? previous : {};
   return {
     runtime: {
-      host: url.hostname,
+      host: canonicalLoopbackHost(url.hostname),
       port: Number(url.port || (url.protocol === "https:" ? 443 : 80)),
       state_directory: paths.stateDirectory,
     },
@@ -126,6 +126,10 @@ function buildDaemonConfig({ paths, endpoint, previous }) {
     },
     policies: old.policies || [],
   };
+}
+
+function canonicalLoopbackHost(host) {
+  return host === "[::1]" ? "::1" : host;
 }
 
 function addStopHook(config, command) {

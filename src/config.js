@@ -24,12 +24,18 @@ export function validateDaemonConfig(value) {
   assertString(value.runtime.state_directory, "runtime.state_directory");
 
   assertObject(value.codexapp, "codexapp");
-  assertKeys(value.codexapp, ["socket", "required_capabilities"], "codexapp");
+  assertKeys(value.codexapp, ["socket", "required_capabilities", "source_address", "target_scopes"], "codexapp");
   assertString(value.codexapp.socket, "codexapp.socket");
   if (!Array.isArray(value.codexapp.required_capabilities) || value.codexapp.required_capabilities.length === 0) {
     throw new Error("codexapp.required_capabilities must be a non-empty array");
   }
   value.codexapp.required_capabilities.forEach((entry, index) => assertString(entry, `codexapp.required_capabilities[${index}]`));
+  assertObject(value.codexapp.source_address, "codexapp.source_address");
+  assertKeys(value.codexapp.source_address, ["scopeId", "sessionId"], "codexapp.source_address");
+  assertString(value.codexapp.source_address.scopeId, "codexapp.source_address.scopeId");
+  assertString(value.codexapp.source_address.sessionId, "codexapp.source_address.sessionId");
+  assertObject(value.codexapp.target_scopes, "codexapp.target_scopes");
+  for (const [key, scopeId] of Object.entries(value.codexapp.target_scopes)) assertString(scopeId, `codexapp.target_scopes.${key}`);
 
   if (!Array.isArray(value.policies)) throw new Error("policies must be an array");
   const names = new Set();

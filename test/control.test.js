@@ -29,6 +29,7 @@ test("MCP reads control state and CLI-shaped mutation is visible through the sam
     assert.equal(mutation.status, 200);
     const state = await new McpStateClient(endpoint).queryState();
     assert.equal(state.state.operators.timer.enabled, true);
+    assert.equal(state.state.operator_registry.find((entry) => entry.name === "timer").status, "skeleton");
   } finally {
     await server.close();
   }
@@ -55,6 +56,15 @@ test("control plane rejects unknown mutation instead of silently accepting it", 
   assert.throws(() => control.mutate({ operation: "timer.tick" }), /unsupported control operation/);
 });
 
+test("control plane cannot enable an operator without an implementation", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  assert.throws(
+    () => control.mutate({ operation: "operator.set_enabled", name: "stopless", enabled: true }),
+    /operator is not implemented: stopless/,
+  );
+});
+
 test("schedule mutation validates its target and send mode at the control boundary", () => {
   const daemon = new HooksDaemon({ codexapp: codexapp() });
   const control = new FrameworkControlPlane({ store: daemon.store });
@@ -66,6 +76,22 @@ test("schedule mutation validates its target and send mode at the control bounda
     () => control.mutate({ operation: "schedule.upsert", id: "bad-mode", at: "2026-09-10T12:00:00Z", body: "wake", target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" }, send_mode: "always" }),
     /unsupported send mode: always/,
   );
+});
+
+test("schedule removal persists a cancelled terminal state", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  control.mutate({
+    operation: "schedule.upsert",
+    id: "cancel-me",
+    at: "2026-09-10T12:00:00Z",
+    body: "wake",
+    target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" },
+  });
+  const result = control.mutate({ operation: "schedule.remove", id: "cancel-me" });
+  assert.equal(result.removed.state, "cancelled");
+  assert.equal(control.query().schedules["cancel-me"].enabled, false);
+  assert.throws(() => control.mutate({ operation: "schedule.resume", id: "cancel-me" }), /schedule is terminal/);
 });
 
 test("health endpoint is an explicit daemon readiness probe", async () => {

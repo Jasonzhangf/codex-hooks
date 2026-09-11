@@ -61,7 +61,7 @@ test("manual clock keeps a timer deterministic and sends exactly once when due",
   assert.equal(fired[0].result.event, "daemon:timer");
   assert.equal(fired[0].result.kind, "timer");
   assert.equal(codexapp.sends.length, 1);
-  assert.equal(store.getControl("schedules")["daily-check"].state, "completed");
+  assert.equal(store.getControl("schedules")["daily-check"].state, "sent");
   assert.deepEqual(await timer.tick(), []);
   assert.equal(codexapp.sends.length, 1);
 });
@@ -84,7 +84,7 @@ test("timer due while working is deferred and resumes after idle", async () => {
   codexapp.state = "idle";
   const resumed = await timer.tick();
   assert.equal(resumed[0].result.sent.length, 1);
-  assert.equal(store.getControl("schedules")["daily-check"].state, "completed");
+  assert.equal(store.getControl("schedules")["daily-check"].state, "sent");
   assert.equal(codexapp.sends.length, 1);
 });
 
@@ -99,6 +99,19 @@ test("working_allowed timer explicitly sends while working", async () => {
   const result = await timer.tick();
   assert.equal(result[0].result.decision, "sent");
   assert.equal(codexapp.sends.length, 1);
+});
+
+test("timer preserves unknown delivery as unresolved and never retries blindly", async () => {
+  const { store } = setup();
+  const timer = new TimerOperator({
+    store,
+    clock: new ManualClock("2026-09-11T10:00:00.000Z"),
+    dispatch: async () => ({ decision: "unknown_delivery", delivery: { state: "unknown_delivery" } }),
+  });
+  const result = await timer.tick();
+  assert.equal(result[0].result.decision, "unknown_delivery");
+  assert.equal(store.getControl("schedules")["daily-check"].state, "unknown_delivery");
+  assert.deepEqual(await timer.tick(), []);
 });
 
 test("timer deferred state survives daemon restart without duplicate delivery", async () => {

@@ -10,7 +10,8 @@
     { "id": "stopless_state", "owner": "policy.stopless", "source": "persistent policy store", "mutable": true },
     { "id": "update_goal_state", "owner": "policy.update_goal", "source": "persistent policy store", "mutable": true },
     { "id": "schedule_state", "owner": "policy.timer", "source": "persistent policy store", "mutable": true },
-    { "id": "longhorizon_state", "owner": "policy.longhorizon", "source": "persistent policy store", "mutable": true }
+    { "id": "longhorizon_state", "owner": "policy.longhorizon", "source": "persistent policy store", "mutable": true },
+    { "id": "memory_state", "owner": "policy.memory", "source": "persistent policy store", "mutable": true }
   ],
   "edges": [
     { "from": "official_hook_event", "to": "message_intent", "owner": "policy", "operation": "derive" },

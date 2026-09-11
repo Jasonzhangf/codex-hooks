@@ -29,7 +29,7 @@ export class ManualClock {
   }
 }
 
-const TERMINAL_SCHEDULE_STATES = new Set(["cancelled", "disabled", "failed", "sent", "completed"]);
+const TERMINAL_SCHEDULE_STATES = new Set(["cancelled", "disabled", "failed", "sent", "completed", "unknown_delivery"]);
 
 export class TimerOperator {
   constructor({ store, dispatch, resume = null, clock = new SystemClock() }) {
@@ -58,12 +58,16 @@ export class TimerOperator {
         const resumed = await this.resume(target);
         const sent = resumed.sent?.find((delivery) => delivery.intent_id === occurrenceId);
         const failed = resumed.failed?.find((delivery) => delivery.intent_id === occurrenceId);
-        if (sent) this.updateSchedule(schedules, schedule, { state: "completed", completed_at: this.clock.now() });
-        else if (failed) this.updateSchedule(schedules, schedule, { state: "failed", failure: clone(failed.evidence || failed) });
+        if (sent) this.updateSchedule(schedules, schedule, { state: "sent", sent_at: this.clock.now() });
+        else if (failed) this.updateSchedule(schedules, schedule, {
+          state: failed.state === "unknown_delivery" ? "unknown_delivery" : "failed",
+          failure: clone(failed.evidence || failed),
+        });
         results.push({ schedule_id: schedule.id, occurrence_id: occurrenceId, result: resumed });
         continue;
       }
 
+      this.updateSchedule(schedules, schedule, { state: "due", due_at: this.clock.now() });
       this.updateSchedule(schedules, schedule, { state: "claimed", claimed_at: this.clock.now() });
       const intent = {
         intent_id: occurrenceId,
@@ -75,12 +79,15 @@ export class TimerOperator {
         expires_at: schedule.expires_at || null,
       };
       try {
+        this.updateSchedule(schedules, schedule, { state: "send_pending", send_pending_at: this.clock.now() });
         const result = await this.dispatch(intent);
         const state = result.decision === "sent"
-          ? "completed"
+          ? "sent"
           : result.decision === "deferred"
             ? "deferred_while_working"
-            : "failed";
+            : result.decision === "unknown_delivery"
+              ? "unknown_delivery"
+              : "failed";
         this.updateSchedule(schedules, schedule, {
           state,
           last_decision: result.decision,

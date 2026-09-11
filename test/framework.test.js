@@ -5,6 +5,7 @@ import { HooksDaemon, MemoryStateStore } from "../src/daemon.js";
 import { DaemonHttpServer } from "../src/server.js";
 import { SEND_MODES, SESSION_STATES, normalizeHookEvent, normalizeIntent, normalizeTarget } from "../src/protocol.js";
 import { JsonStateStore } from "../src/persistence.js";
+import { verifyCodexAppPort } from "../src/codexapp-port.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +29,7 @@ function fakeCodexapp(state = "idle") {
     sends: [],
     async session_status() { this.statusCalls += 1; return { state: this.state }; },
     async send_message(input) { this.sends.push(input); return { accepted: true, attempt_id: input.attempt_id }; },
+    async delivery_evidence({ attempt_id }) { return { attempt_id, target_receipt: { clientId: attempt_id }, source: "test.codexapp" }; },
   };
 }
 
@@ -64,6 +66,86 @@ test("official Stop input wakes through codexapp without claiming native continu
   } finally {
     await server.close();
   }
+});
+
+test("native delivery evidence advances only through the exact receipt chain", async () => {
+  const codexapp = fakeCodexapp("idle");
+  const daemon = new HooksDaemon({ codexapp });
+  const sent = await daemon.handleHook(event("Stop", { event_id: "evidence-chain" }), { intent: intent("evidence-chain") });
+  assert.equal(sent.delivery.state, "accepted");
+  codexapp.delivery_evidence = async ({ attempt_id, after_state }) => ({
+    source: "native-test",
+    attempt_id,
+    ...(after_state === "accepted" ? { target_receipt: { clientId: attempt_id } } : {}),
+    ...(after_state === "delivered" ? { execution_item_id: "item-1" } : {}),
+    ...(after_state === "executed" ? { response_turn_id: "turn-2" } : {}),
+    ...(after_state === "replied" ? { cursor: "cursor-1", read_item_id: "item-1" } : {}),
+    ...(after_state === "read" ? { ack_id: "ack-1" } : {}),
+  });
+
+  for (const state of ["delivered", "executed", "replied", "read", "consumed"]) {
+    const evidence = await daemon.reconcileDeliveryEvidence("evidence-chain");
+    assert.equal(evidence.state, state);
+  }
+  assert.equal(daemon.store.getIntent("evidence-chain").state, "consumed");
+  await assert.rejects(() => daemon.reconcileDeliveryEvidence("evidence-chain"), /not awaiting delivery reconciliation/);
+  await assert.rejects(() => new HooksDaemon({ codexapp: fakeCodexapp("idle") }).reconcileDeliveryEvidence("missing"), /intent not found/);
+});
+
+test("a native delivered send receipt is preserved as delivered evidence", async () => {
+  const codexapp = fakeCodexapp("idle");
+  codexapp.send_message = async (input) => ({ accepted: true, state: "delivered", attempt_id: input.attempt_id, target_receipt: { clientId: input.attempt_id } });
+  const daemon = new HooksDaemon({ codexapp });
+  const result = await daemon.handleHook(event("Stop", { event_id: "native-delivered" }), { intent: intent("native-delivered") });
+  assert.equal(result.delivery.state, "delivered");
+  assert.equal(daemon.store.getIntent("native-delivered").state, "delivered");
+});
+
+test("delivery evidence endpoint records a single explicit next state", async () => {
+  const codexapp = fakeCodexapp("idle");
+  codexapp.send_message = async () => {
+    throw Object.assign(new Error("send timed out"), { code: "transport_timeout" });
+  };
+  const daemon = new HooksDaemon({ codexapp });
+  const server = new DaemonHttpServer(daemon);
+  const endpoint = await server.listen();
+  try {
+    const sent = await fetch(`${endpoint}/v1/hooks/dispatch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ event: event("Stop", { event_id: "evidence-http" }), intent: intent("evidence-http") }),
+    });
+    assert.equal((await sent.json()).delivery.state, "unknown_delivery");
+    const evidence = await fetch(`${endpoint}/v1/delivery/evidence`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ intent_id: "evidence-http", reconcile: true }),
+    });
+    assert.equal(evidence.status, 200);
+    assert.equal((await evidence.json()).result.state, "delivered");
+    const forged = await fetch(`${endpoint}/v1/delivery/evidence`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ intent_id: "evidence-http", state: "delivered", evidence: { attempt_id: "evidence-http", target_receipt: { clientId: "evidence-http" } } }),
+    });
+    assert.equal(forged.status, 400);
+    assert.equal((await forged.json()).code, "client_evidence_forbidden");
+  } finally {
+    await server.close();
+  }
+});
+
+test("codexapp capability verification is required before daemon readiness", async () => {
+  await assert.rejects(
+    () => verifyCodexAppPort({ session_status: async () => ({}), send_message: async () => ({}) }),
+    /requires capabilities\(\)/,
+  );
+  const capabilities = await verifyCodexAppPort({
+    capabilities: async () => ["session_status", "send_message_to_thread"],
+    session_status: async () => ({}),
+    send_message: async () => ({}),
+  });
+  assert.deepEqual(capabilities, ["session_status", "send_message_to_thread"]);
 });
 
 test("the installed command adapter preserves the official stdin/stdout boundary", async () => {
@@ -315,13 +397,37 @@ test("restart recovery preserves an in-flight outbox as unknown without blind re
   const store = new MemoryStateStore();
   const daemon = new HooksDaemon({ codexapp, store });
   const pending = intent("outbox-crash");
-  store.putIntent(pending.intent_id, { ...pending, state: "emitted", decision: "emitted", intent: pending });
+  store.putIntent(pending.intent_id, { ...pending, state: "emitted", decision: "emitted", evidence: { attempt_id: pending.intent_id }, intent: pending });
   const recovered = new HooksDaemon({ codexapp: fakeCodexapp("idle"), store }).recoverOutbox();
   assert.equal(recovered.length, 1);
   assert.equal(recovered[0].state, "unknown_delivery");
   assert.equal(recovered[0].evidence.code, "restart_recovery_requires_reconcile");
   assert.equal(store.getIntent("outbox-crash").decision, "unknown_delivery");
+  assert.equal(store.getIntent("outbox-crash").evidence.attempt_id, "outbox-crash");
   assert.equal(codexapp.sends.length, 0);
+});
+
+test("unknown delivery can advance only through an explicit matching native receipt", async () => {
+  const codexapp = fakeCodexapp("idle");
+  codexapp.send_message = async () => { throw Object.assign(new Error("send timed out"), { code: "transport_timeout" }); };
+  const daemon = new HooksDaemon({ codexapp });
+  await daemon.handleHook(event("Stop", { event_id: "reconcile" }), { intent: intent("reconcile") });
+  codexapp.delivery_evidence = async ({ attempt_id }) => ({
+    attempt_id,
+    target_receipt: { clientId: "other-attempt" },
+  });
+  await assert.rejects(
+    () => daemon.reconcileDeliveryEvidence("reconcile"),
+    /matching target receipt/,
+  );
+  codexapp.delivery_evidence = async ({ attempt_id }) => ({
+    attempt_id,
+    target_receipt: { clientId: attempt_id },
+    source: "test.codexapp",
+  });
+  const reconciled = await daemon.reconcileDeliveryEvidence("reconcile");
+  assert.equal(reconciled.state, "delivered");
+  assert.equal(daemon.store.getIntent("reconcile").state, "delivered");
 });
 
 test("a malformed native send receipt is rejected", async () => {

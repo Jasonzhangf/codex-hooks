@@ -9,6 +9,7 @@
     "namespace": { "type": "string", "minLength": 1 },
     "appserver_id": { "type": "string", "minLength": 1 },
     "session_id": { "type": "string", "minLength": 1 },
-    "thread_id": { "type": "string", "minLength": 1 }
+    "thread_id": { "type": "string", "minLength": 1 },
+    "scope_id": { "type": "string", "minLength": 1 }
   }
 }

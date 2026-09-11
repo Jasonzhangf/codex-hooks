@@ -4,7 +4,7 @@
   "machines": {
     "runtime": {
       "initial": "down",
-      "states": ["down", "starting_codexapp", "codexapp_ready", "starting_hooksd", "ready", "draining", "failed"],
+      "states": ["down", "starting_codexapp", "codexapp_ready", "starting_hooksd", "ready", "degraded", "draining", "stopping", "stopped", "crashed", "restarting", "failed"],
       "transitions": [
         ["down", "start", "starting_codexapp"],
         ["starting_codexapp", "capabilities_ok", "codexapp_ready"],
@@ -12,8 +12,15 @@
         ["codexapp_ready", "start_hooksd", "starting_hooksd"],
         ["starting_hooksd", "ready", "ready"],
         ["starting_hooksd", "error", "failed"],
+        ["ready", "nonfatal_dependency_error", "degraded"],
+        ["degraded", "dependency_restored", "ready"],
         ["ready", "shutdown", "draining"],
-        ["draining", "closed", "down"],
+        ["draining", "stop_children", "stopping"],
+        ["stopping", "closed", "stopped"],
+        ["stopping", "child_crash", "crashed"],
+        ["crashed", "restart", "restarting"],
+        ["restarting", "capabilities_ok", "codexapp_ready"],
+        ["restarting", "error", "failed"],
         ["ready", "fatal_error", "failed"]
       ]
     },
@@ -46,7 +53,7 @@
     },
     "hook": {
       "initial": "received",
-      "states": ["received", "validated", "normalized", "dispatched", "waiting", "decided", "acknowledged", "timed_out", "failed", "duplicate", "stale"],
+      "states": ["received", "validated", "normalized", "dispatched", "waiting", "decided", "projected", "observe", "allow", "deny", "delay", "inject", "acknowledged", "timed_out", "failed", "duplicate", "stale"],
       "transitions": [
         ["received", "valid", "validated"],
         ["received", "invalid", "failed"],
@@ -57,13 +64,19 @@
         ["dispatched", "expired", "stale"],
         ["waiting", "decision", "decided"],
         ["waiting", "timeout", "timed_out"],
-        ["decided", "projected", "acknowledged"],
+        ["decided", "projected", "projected"],
+        ["projected", "observe", "observe"],
+        ["projected", "allow", "allow"],
+        ["projected", "deny", "deny"],
+        ["projected", "delay", "delay"],
+        ["projected", "inject", "inject"],
+        ["projected", "acknowledged", "acknowledged"],
         ["decided", "projection_error", "failed"]
       ]
     },
     "message": {
       "initial": "created",
-      "states": ["created", "suppressed", "queued", "deferred", "emitted", "sending", "accepted", "delivered", "executed", "replied", "read", "failed", "unknown_delivery", "expired", "cancelled"],
+      "states": ["created", "suppressed", "queued", "deferred", "emitted", "sending", "accepted", "sent", "delivered", "executed", "replied", "read", "consumed", "acknowledged", "failed", "unknown_delivery", "retryable", "deduplicated", "expired", "cancelled"],
       "transitions": [
         ["created", "policy_suppressed", "suppressed"],
         ["created", "working_idle_only_or_stopping", "deferred"],
@@ -72,22 +85,30 @@
         ["created", "unknown_or_disconnected", "failed"],
         ["emitted", "send_call_started", "sending"],
         ["sending", "native_accept", "accepted"],
+        ["accepted", "receipt_normalized", "sent"],
+        ["sent", "target_receipt", "delivered"],
         ["sending", "transport_error", "failed"],
         ["sending", "uncertain_timeout", "unknown_delivery"],
+        ["unknown_delivery", "reconcile_target_receipt", "delivered"],
         ["accepted", "target_receipt", "delivered"],
         ["delivered", "execution_evidence", "executed"],
         ["executed", "new_target_turn", "replied"],
         ["replied", "read_with_cursor", "read"],
+        ["read", "consumed_ack", "consumed"],
+        ["read", "ack_receipt", "acknowledged"],
         ["deferred", "idle_observed", "emitted"],
         ["queued", "eligibility_observed", "emitted"],
         ["deferred", "unknown_or_disconnected", "failed"],
         ["queued", "expired", "expired"],
-        ["deferred", "cancelled", "cancelled"]
+        ["deferred", "cancelled", "cancelled"],
+        ["accepted", "retryable_transport_error", "retryable"],
+        ["created", "duplicate_intent", "deduplicated"],
+        ["retryable", "new_attempt", "emitted"]
       ]
     },
     "schedule": {
       "initial": "absent",
-      "states": ["absent", "configured", "enabled", "disabled", "due", "claimed", "deferred_while_working", "send_pending", "sent", "completed", "failed", "cancelled"],
+      "states": ["absent", "configured", "enabled", "disabled", "due", "claimed", "deferred_while_working", "send_pending", "sent", "completed", "failed", "retryable", "expired", "session_missing", "cancelled"],
       "transitions": [
         ["absent", "upsert", "configured"],
         ["configured", "enable", "enabled"],
@@ -99,6 +120,10 @@
         ["send_pending", "accepted", "sent"],
         ["sent", "occurrence_complete", "completed"],
         ["claimed", "error", "failed"],
+        ["claimed", "session_missing", "session_missing"],
+        ["claimed", "expired", "expired"],
+        ["failed", "retryable", "retryable"],
+        ["retryable", "new_attempt", "send_pending"],
         ["configured", "remove", "cancelled"],
         ["disabled", "remove", "cancelled"]
       ]

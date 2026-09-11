@@ -1,0 +1,38 @@
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { once } from "node:events";
+import { spawn } from "node:child_process";
+import test from "node:test";
+
+test("hook command exposes daemon delivery failures instead of printing success", async () => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      protocol: "routecodex-hooks/v1",
+      decision: "fail_closed",
+      error: { code: "disconnected_session", message: "session is disconnected" },
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const child = spawn(process.execPath, ["src/hook-entry.js", "--kind", "stop"], {
+    cwd: new URL("..", import.meta.url),
+    env: { ...process.env, ROUTECODEX_HOOKS_ENDPOINT: `http://127.0.0.1:${address.port}` },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  try {
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stdin.end(JSON.stringify({ session_id: "session-1", hook_event_name: "Stop", cwd: "/workspace" }));
+    const [exitCode] = await once(child, "close");
+    assert.notEqual(exitCode, 0);
+    assert.equal(stdout, "");
+    assert.match(stderr, /session is disconnected/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

@@ -6,6 +6,10 @@ description: Explain how to use the independent Stop hook without creating a loo
 Stopless is a policy that may create a `MessageIntent`; it is not part of the
 framework daemon and is intentionally not implemented in this skeleton.
 
+For local installation, configuration, Stop hook enablement, and status checks,
+use the `routecodex-hooks` skill. This skill only defines the Stopless policy
+boundary and loop guard.
+
 The Stop hook must respect the official `stop_hook_active` guard. If a policy
 needs to wake the session through the external path, the daemon uses
 `codexapp.sendmessage` and the hook returns ordinary successful output (`{}`).

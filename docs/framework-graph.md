@@ -12,15 +12,32 @@ it does not enable Stopless, scheduling, memory, or goal mutation policy.
 5. The daemon owns policy state, idempotency, persistence, status gating, and
    delivery decisions.
 6. `codexapp` owns Codex TUI/Desktop App Server communication and status
-   observation. It is an internal independent binary in the RouteCodex
-   distribution, not a provider protocol feature.
+   observation. It is planned as an independent internal binary in the
+   RouteCodex distribution, not a provider protocol feature; this skeleton
+   supplies only its typed port boundary.
 7. `codexapp.sendmessage` is the only wake action.
 8. Every message intent declares one of:
    `idle_only` (do not disturb a working object) or `working_allowed`.
-9. A native queue acceptance is not proof of delivery, execution, reply, or
-   read. Those are separate evidence states.
+9. A native queue acceptance is not proof of delivery, execution, reply, read,
+   or consumption. Those are separate evidence states.
 10. Stopless and update-goal have separate hook kinds and separate policy
     state. They share only the transport/status gate.
+
+## Evidence status
+
+The graph is intentionally split into three evidence classes:
+
+- **Implemented baseline**: event normalization, hook-kind routing, status and
+  input gating, idempotency, JSON persistence, outbox recovery, external Stop
+  output, deterministic timer skeleton, operator-slot query, and exact delivery
+  evidence progression.
+- **Contract-only**: Stopless, update-goal policy decisions, long-horizon,
+  memory, native Stop continuation, and recurring scheduling policy. Their
+  slots and boundaries exist, but no business operator is enabled.
+- **Real-runtime pending**: CodexApp TUI/Desktop App Server handshake, native
+  delivery/read/consumption receipts, plugin trust approval, and RouteCodex
+  managed sidecar startup. Mock ports and HTTP responses cannot promote these
+  edges to native evidence.
 
 ## Complete framework graph
 
@@ -54,7 +71,7 @@ flowchart TD
   Q -->|transport error| X6[failed; preserve error]
   Q -->|accepted| S[accepted only]
   S -->|native evidence| T[delivered]
-  T --> U[executed / replied / read, only with matching evidence]
+  T --> U[executed / replied / read / consumed, only with matching evidence]
   Q --> V{origin is Stop?}
   V -->|yes| W[return ordinary successful hook output]
   V -->|no| Y[return event-specific official result]
@@ -80,7 +97,7 @@ flowchart TD
 | Daemon → sendmessage | codexapp | target + body + attempt id → native receipt | `emitted → sending → accepted` | exact native error, no silent retry |
 | Stop send → hook result | Stop adapter | accepted send → ordinary official success JSON | current hook ends | `{}`; never claim native continuation |
 | Accepted → delivered | codexapp/daemon | target receipt → native receipt evidence | `accepted → delivered` | acceptance alone remains incomplete |
-| Delivered → reply/read | codexapp/daemon | matching item/turn/cursor → evidence | `delivered → executed → replied → read` | timeout/unchanged cursor/unknown remains incomplete |
+| Delivered → reply/read/consume | codexapp/daemon | matching item/turn/cursor/ACK → evidence | `delivered → executed → replied → read → consumed` | timeout/unchanged cursor/unknown remains incomplete |
 | Timer/longhorizon → intent | daemon policy | due state → typed internal intent | `scheduled → due → pending/sent` | no fabricated official Hook event |
 | MCP → state | MCP server | query → snapshot | no transition | query cannot send or claim execution |
 | CLI → mutation | CLI | explicit command → daemon mutation | persisted transition | mutation result must be MCP-readable |
@@ -171,6 +188,8 @@ flowchart LR
   Q -->|unknown/disconnected/failed| F[explicit failure]
   P -->|legal status transition| Q
   C --> R[accepted or uncertain/failed receipt]
+  R --> E[explicit native evidence reconciler]
+  E --> R
 ```
 
 Operator state is namespaced by `operator_id`; the only shared inputs are the
@@ -189,8 +208,8 @@ The machine-readable contract in `contracts/state-machine.json` covers:
 - hook processing: received, validation, normalization, dispatch, waiting,
   decision, projection, duplicate, stale, timeout and failure;
 - message: suppressed, queued, deferred, emitted, sending, accepted,
-  delivered, executed, replied, read, failed, uncertain, expired and
-  cancelled;
+  delivered, executed, replied, read, consumed, failed, uncertain, expired
+  and cancelled;
 - schedule: configured, enabled, due, claimed, deferred while working,
   pending, sent, completed, failed and cancelled;
 - operator: inactive, armed, triggered, deferred, eligible, completed and
@@ -198,5 +217,6 @@ The machine-readable contract in `contracts/state-machine.json` covers:
   and longhorizon.
 
 The contract deliberately distinguishes a transport acceptance from later
-native evidence. No transition to `delivered`, `executed`, `replied`, or `read`
-is implied by an HTTP response, a log line, a queue insertion, or an MCP read.
+native evidence. No transition to `delivered`, `executed`, `replied`, `read`, or
+`consumed` is implied by an HTTP response, a log line, a queue insertion, or an
+MCP read.

@@ -8,6 +8,11 @@ export class McpStateClient {
     return this.get("/v1/control/state");
   }
 
+  async queryStatus() {
+    const [health, control] = await Promise.all([this.get("/health"), this.queryState()]);
+    return { health, control };
+  }
+
   async get(path) {
     const response = await fetch(`${this.endpoint}${path}`);
     const body = await response.json();

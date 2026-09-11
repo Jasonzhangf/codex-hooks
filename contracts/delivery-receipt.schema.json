@@ -9,7 +9,7 @@
     "intent_id": { "type": "string", "minLength": 1 },
     "state": {
       "type": "string",
-      "enum": ["created", "deferred", "emitted", "accepted", "delivered", "executed", "replied", "read", "failed", "unknown_delivery"]
+      "enum": ["created", "suppressed", "queued", "deferred", "emitted", "sending", "accepted", "sent", "delivered", "executed", "replied", "read", "consumed", "acknowledged", "failed", "unknown_delivery", "retryable", "deduplicated", "expired", "cancelled"]
     },
     "attempt_id": { "type": "string", "minLength": 1 },
     "observed_at": { "type": "string", "format": "date-time" },

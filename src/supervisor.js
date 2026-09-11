@@ -1,4 +1,6 @@
-const STATES = Object.freeze(["down", "starting_codexapp", "starting_hooksd", "ready", "draining", "failed"]);
+import { verifyCodexAppPort } from "./codexapp-port.js";
+
+const STATES = Object.freeze(["down", "starting_codexapp", "codexapp_ready", "starting_hooksd", "ready", "degraded", "draining", "stopping", "stopped", "crashed", "restarting", "failed"]);
 
 export class HooksSupervisor {
   constructor({ startCodexapp, startHooksd }) {
@@ -14,11 +16,14 @@ export class HooksSupervisor {
 
   async start() {
     if (this.state === "ready") return this.status();
-    if (this.state !== "down") throw new Error(`supervisor cannot start from ${this.state}`);
-    this.state = "starting_codexapp";
+    if (!["down", "stopped", "crashed", "restarting"].includes(this.state)) throw new Error(`supervisor cannot start from ${this.state}`);
+    if (this.state !== "down") this.state = "restarting";
+    else this.state = "starting_codexapp";
     try {
       this.codexapp = await this.startCodexapp();
       if (!this.codexapp?.ready) throw new Error("codexapp did not become ready");
+      await verifyCodexAppPort(this.codexapp);
+      this.state = "codexapp_ready";
       this.state = "starting_hooksd";
       this.hooksd = await this.startHooksd({ codexapp: this.codexapp });
       if (!this.hooksd?.ready) throw new Error("hooksd did not become ready");
@@ -36,15 +41,34 @@ export class HooksSupervisor {
   }
 
   async stop() {
-    if (this.state === "down") return this.status();
+    if (["down", "stopped"].includes(this.state)) return this.status();
     this.state = "draining";
+    this.state = "stopping";
     try {
       await this.stopChildren();
     } catch (error) {
       this.state = "failed";
       throw error;
     }
-    this.state = "down";
+    this.state = "stopped";
+    return this.status();
+  }
+
+  markDegraded() {
+    if (this.state !== "ready") throw new Error(`supervisor cannot degrade from ${this.state}`);
+    this.state = "degraded";
+    return this.status();
+  }
+
+  restore() {
+    if (this.state !== "degraded") throw new Error(`supervisor cannot restore from ${this.state}`);
+    this.state = "ready";
+    return this.status();
+  }
+
+  markCrashed() {
+    if (!["ready", "degraded", "stopping"].includes(this.state)) throw new Error(`supervisor cannot mark crashed from ${this.state}`);
+    this.state = "crashed";
     return this.status();
   }
 

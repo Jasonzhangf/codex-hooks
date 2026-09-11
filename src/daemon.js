@@ -23,6 +23,15 @@ const DELIVERY = Object.freeze({
   FAILED: "failed",
 });
 
+const DELIVERY_EVIDENCE_NEXT = Object.freeze({
+  unknown_delivery: "delivered",
+  accepted: "delivered",
+  delivered: "executed",
+  executed: "replied",
+  replied: "read",
+  read: "consumed",
+});
+
 export class MemoryStateStore {
   constructor() {
     this.events = new Map();
@@ -246,11 +255,62 @@ export class HooksDaemon {
       const delivery = this.transition(intent, "unknown_delivery", {
         code: "restart_recovery_requires_reconcile",
         previous_state: record.state,
+        attempt_id: record.evidence?.attempt_id,
         at: this.now(),
       });
       this.rememberIntent(intent, delivery, "unknown_delivery");
       return clone(delivery);
     });
+  }
+
+  #recordDeliveryEvidence(intentId, state, evidence) {
+    if (typeof intentId !== "string" || intentId.trim() === "") throw new Error("intent_id is required");
+    if (typeof evidence !== "object" || evidence === null || Array.isArray(evidence)) throw new Error("delivery evidence must be an object");
+    const existing = this.store.getIntent(intentId);
+    if (!existing) {
+      const error = new Error(`intent not found: ${intentId}`);
+      error.code = "intent_not_found";
+      throw error;
+    }
+    if (existing.state === state) {
+      assertSameEvidence(existing, state, evidence);
+      return clone(existing);
+    }
+    if (DELIVERY_EVIDENCE_NEXT[existing.state] !== state) {
+      const error = new Error(`invalid delivery evidence transition: ${existing.state} -> ${state}`);
+      error.code = "invalid_delivery_transition";
+      throw error;
+    }
+    assertDeliveryEvidence(existing, state, evidence);
+    const intent = existing.intent || existing;
+    const delivery = this.transition(intent, state, { ...clone(evidence), at: this.now() });
+    this.rememberIntent(intent, delivery, existing.decision || "sent");
+    return clone(delivery);
+  }
+
+  async reconcileDeliveryEvidence(intentId) {
+    const existing = this.store.getIntent(intentId);
+    if (!existing) {
+      const error = new Error(`intent not found: ${intentId}`);
+      error.code = "intent_not_found";
+      throw error;
+    }
+    if (!DELIVERY_EVIDENCE_NEXT[existing.state]) {
+      const error = new Error(`intent is not awaiting delivery reconciliation: ${intentId}`);
+      error.code = "intent_not_reconcilable";
+      throw error;
+    }
+    if (typeof this.codexapp.delivery_evidence !== "function") {
+      const error = new Error("codexapp port does not provide authoritative delivery evidence");
+      error.code = "delivery_evidence_unavailable";
+      throw error;
+    }
+    const evidence = await this.codexapp.delivery_evidence({
+      target: existing.intent?.target || existing.target,
+      attempt_id: existing.evidence?.attempt_id,
+      after_state: existing.state,
+    });
+    return this.#recordDeliveryEvidence(intentId, DELIVERY_EVIDENCE_NEXT[existing.state], evidence);
   }
 
   async send(event, hookKind, intent, state, attemptId = intent.intent_id) {
@@ -263,9 +323,12 @@ export class HooksDaemon {
     this.rememberIntent(intent, sending, "sending");
     try {
       const native = await this.codexapp.send_message({ target: intent.target, body: intent.body, attempt_id: attemptId });
-      assertAcceptedReceipt(native);
+      assertAcceptedReceipt(native, attemptId);
       const accepted = this.transition({ ...sending, native }, DELIVERY.ACCEPTED, { state, attempt_id: attemptId, native, at: this.now() });
       this.rememberIntent(intent, accepted, "sent");
+      const delivered = nativeState(native) === "delivered"
+        ? this.#recordDeliveryEvidence(intent.intent_id, "delivered", { native, target_receipt: nativeReceipt(native), attempt_id: attemptId })
+        : accepted;
       // An external sendmessage wake is not the official Stop continuation
       // protocol. Do not emit `decision:block` or `continue:false` here:
       // neither value is a proof that the separately queued message was
@@ -274,13 +337,14 @@ export class HooksDaemon {
       const hookOutput = hookKind === "stop"
         ? projectStopDecision({ action: "inject" }, { externalWakeAccepted: true })
         : {};
-      return this.result(event, hookKind, "sent", { delivery: accepted, hook_output: hookOutput });
+      return this.result(event, hookKind, "sent", { delivery: delivered, hook_output: hookOutput });
     } catch (error) {
       if (isUncertainTransportError(error)) {
         const unknown = this.transition(sending, "unknown_delivery", {
           state,
           code: error.code || "unknown_delivery",
           message: error.message,
+          attempt_id: attemptId,
           at: this.now(),
         });
         this.rememberIntent(intent, unknown, "unknown_delivery");
@@ -321,11 +385,92 @@ export class HooksDaemon {
   }
 }
 
-function assertAcceptedReceipt(value) {
-  if (value?.accepted === true || value?.state === "accepted" || value?.state === "delivered" || value?.nativeResult?.state === "accepted" || value?.nativeResult?.state === "delivered") return value;
+function assertAcceptedReceipt(value, attemptId) {
+  const accepted = value?.accepted === true || value?.state === "accepted" || value?.state === "delivered" || value?.nativeResult?.state === "accepted" || value?.nativeResult?.state === "delivered";
+  const receiptAttemptId = value?.attempt_id || value?.nativeResult?.attempt_id;
+  if (accepted && receiptAttemptId === attemptId) return value;
   const error = new Error("codexapp returned no accepted send receipt");
   error.code = "invalid_send_receipt";
   throw error;
+}
+
+function assertDeliveryEvidence(existing, state, evidence) {
+  const expectedAttemptId = existing.evidence?.attempt_id;
+  if (typeof expectedAttemptId !== "string" || evidence.attempt_id !== expectedAttemptId) {
+    const error = new Error(`delivery evidence attempt_id does not match intent: ${existing.intent_id}`);
+    error.code = "delivery_evidence_attempt_mismatch";
+    throw error;
+  }
+  if (state === "read" && !isNonEmptyString(evidence.cursor)) {
+    const error = new Error("read evidence requires a cursor");
+    error.code = "read_evidence_requires_cursor";
+    throw error;
+  }
+  if (state === "delivered" && !validTargetReceipt(evidence.target_receipt || nativeReceipt(evidence.native), expectedAttemptId)) {
+    const error = new Error("delivered evidence requires a matching target receipt");
+    error.code = "delivered_evidence_requires_target_receipt";
+    throw error;
+  }
+  if (state === "executed" && !isNonEmptyString(evidence.execution_item_id)) {
+    const error = new Error("executed evidence requires an execution_item_id");
+    error.code = "executed_evidence_requires_execution_item";
+    throw error;
+  }
+  if (state === "replied" && !isNonEmptyString(evidence.response_turn_id) && !isNonEmptyString(evidence.response_item_id)) {
+    const error = new Error("replied evidence requires a response turn or item");
+    error.code = "replied_evidence_requires_response";
+    throw error;
+  }
+  if (state === "read" && !isNonEmptyString(evidence.read_item_id)) {
+    const error = new Error("read evidence requires a read_item_id");
+    error.code = "read_evidence_requires_item";
+    throw error;
+  }
+  if (state === "consumed" && !isNonEmptyString(evidence.ack_id)) {
+    const error = new Error("consumed evidence requires an ack_id");
+    error.code = "consumed_evidence_requires_ack";
+    throw error;
+  }
+}
+
+function assertSameEvidence(existing, state, evidence) {
+  if (evidenceIdentity(existing.evidence, state) !== evidenceIdentity(evidence, state)) {
+    const error = new Error(`duplicate delivery evidence does not match existing ${state} evidence`);
+    error.code = "duplicate_delivery_evidence_mismatch";
+    throw error;
+  }
+}
+
+function evidenceIdentity(evidence, state) {
+  if (!evidence || typeof evidence !== "object") return null;
+  if (state === "delivered") return `${evidence.attempt_id || ""}:${receiptIdentity(evidence.target_receipt || nativeReceipt(evidence.native))}`;
+  if (state === "executed") return `${evidence.attempt_id || ""}:${evidence.execution_item_id || ""}`;
+  if (state === "replied") return `${evidence.attempt_id || ""}:${evidence.response_turn_id || evidence.response_item_id || ""}`;
+  if (state === "read") return `${evidence.attempt_id || ""}:${evidence.cursor || ""}:${evidence.read_item_id || ""}`;
+  if (state === "consumed") return `${evidence.attempt_id || ""}:${evidence.ack_id || ""}`;
+  return JSON.stringify(evidence);
+}
+
+function receiptIdentity(receipt) {
+  if (!receipt || typeof receipt !== "object") return "";
+  return receipt.clientId || receipt.clientUserMessageId || receipt.messageId || "";
+}
+
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function nativeState(value) {
+  return value?.state || value?.nativeResult?.state || null;
+}
+
+function nativeReceipt(value) {
+  return value?.target_receipt || value?.targetReceipt || value?.native_result?.targetReceipt || value?.nativeResult?.targetReceipt || null;
+}
+
+function validTargetReceipt(receipt, attemptId) {
+  if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) return false;
+  return receipt.clientId === attemptId || receipt.clientUserMessageId === attemptId || receipt.messageId === attemptId;
 }
 
 function isUncertainTransportError(error) {
@@ -338,7 +483,8 @@ function sameTarget(left, right) {
   return left.namespace === right.namespace &&
     left.appserver_id === right.appserver_id &&
     left.session_id === right.session_id &&
-    left.thread_id === right.thread_id;
+    left.thread_id === right.thread_id &&
+    (left.scope_id || null) === (right.scope_id || null);
 }
 
 function assertSameIntent(left, right) {

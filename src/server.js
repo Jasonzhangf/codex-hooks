@@ -46,6 +46,17 @@ export class DaemonHttpServer {
       }
       return;
     }
+    if (request.method === "POST" && request.url === "/v1/delivery/evidence") {
+      try {
+        const body = await readJson(request);
+        if (body.reconcile !== true) throw Object.assign(new Error("delivery evidence is CodexApp-owned; use reconcile:true"), { code: "client_evidence_forbidden" });
+        const result = await this.daemon.reconcileDeliveryEvidence(body.intent_id);
+        this.writeJson(response, 200, { protocol: "routecodex-hooks/v1", result });
+      } catch (error) {
+        this.writeJson(response, 400, { protocol: "routecodex-hooks/v1", error: error.message, code: error.code || "invalid_delivery_evidence" });
+      }
+      return;
+    }
     if (request.method !== "POST" || request.url !== "/v1/hooks/dispatch") {
       this.writeJson(response, 404, { error: "not_found" });
       return;

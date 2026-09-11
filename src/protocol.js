@@ -74,12 +74,17 @@ export const DELIVERY_STATES = Object.freeze([
   "emitted",
   "sending",
   "accepted",
+  "sent",
   "delivered",
   "executed",
   "replied",
   "read",
+  "consumed",
+  "acknowledged",
   "failed",
   "unknown_delivery",
+  "retryable",
+  "deduplicated",
   "expired",
   "cancelled",
 ]);
@@ -96,6 +101,12 @@ export const HOOK_PROCESSING_STATES = Object.freeze([
   "failed",
   "duplicate",
   "stale",
+  "projected",
+  "observe",
+  "allow",
+  "deny",
+  "delay",
+  "inject",
 ]);
 
 export const OPERATOR_STATES = Object.freeze([
@@ -122,6 +133,7 @@ export function normalizeTarget(value) {
     appserver_id: assertNonEmpty(value.appserver_id, "target.appserver_id"),
     session_id: assertNonEmpty(value.session_id, "target.session_id"),
     thread_id: assertNonEmpty(value.thread_id, "target.thread_id"),
+    ...(value.scope_id == null ? {} : { scope_id: assertNonEmpty(value.scope_id, "target.scope_id") }),
   };
 }
 

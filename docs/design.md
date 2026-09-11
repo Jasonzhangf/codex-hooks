@@ -76,7 +76,11 @@ thread_read(target, cursor) -> later evidence when caller requires it
 
 The target always contains namespace, appserver id, session id, and thread id.
 `sendmessage` may map to native `thread/queue/add`; that mapping is private to
-codexapp.
+codexapp. In the current local bridge, `CodexAppBridgePort` explicitly maps
+the hooks-facing `send_message_to_thread` capability to bridge control method
+`send`, maps `<namespace>/<appserver_id>` through configured scope bindings,
+and keeps native `scopeId`, `sessionId`, `threadId`, and `attemptId` out of the
+business message body.
 
 ## Hook projection
 

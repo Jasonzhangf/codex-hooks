@@ -4,7 +4,12 @@ import { validateDaemonConfig } from "../src/config.js";
 
 const valid = {
   runtime: { host: "127.0.0.1", port: 8787, state_directory: "/tmp/hooks-state" },
-  codexapp: { socket: "/tmp/codexapp.sock", required_capabilities: ["session_status", "sendmessage"] },
+  codexapp: {
+    socket: "/tmp/codexapp.sock",
+    required_capabilities: ["session_status", "send_message_to_thread"],
+    source_address: { scopeId: "hooks", sessionId: "hooksd" },
+    target_scopes: { "codex_tui/tui-appserver": "local:tui" },
+  },
   policies: [{ name: "timer", enabled: false, config: {} }],
 };
 

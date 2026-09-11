@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 
+import fs from "node:fs";
+
+const options = parseArgs(process.argv.slice(2));
 const input = await readStdin();
-const endpoint = process.env.ROUTECODEX_HOOKS_ENDPOINT || "http://127.0.0.1:8787";
-const kindIndex = process.argv.indexOf("--kind");
-const kind = kindIndex >= 0 ? process.argv[kindIndex + 1] : null;
+const endpoint = process.env.ROUTECODEX_HOOKS_ENDPOINT || loadEndpoint(options.config);
+const kind = options.kind;
 const response = await fetch(`${endpoint}/v1/hooks/dispatch`, {
   method: "POST",
   headers: { "content-type": "application/json" },
@@ -12,6 +14,11 @@ const response = await fetch(`${endpoint}/v1/hooks/dispatch`, {
 const body = await response.text();
 if (!response.ok) throw new Error(`hooks daemon rejected event: ${response.status} ${body}`);
 const result = JSON.parse(body);
+if (result.decision === "fail_closed" || result.decision === "unknown_delivery") {
+  const error = new Error(result.error?.message || `hooks daemon ${result.decision}`);
+  error.code = result.error?.code || result.decision;
+  throw error;
+}
 process.stdout.write(`${JSON.stringify(result.hook_output || {})}\n`);
 
 function readStdin() {
@@ -24,4 +31,29 @@ function readStdin() {
     });
     process.stdin.on("error", reject);
   });
+}
+
+function parseArgs(args) {
+  const options = { kind: null, config: null };
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value === "--kind" || value === "--config") {
+      const next = args[index + 1];
+      if (!next || next.startsWith("--")) throw new Error(`${value} requires a value`);
+      options[value === "--kind" ? "kind" : "config"] = next;
+      index += 1;
+    } else {
+      throw new Error(`unsupported argument: ${value}`);
+    }
+  }
+  return options;
+}
+
+function loadEndpoint(path) {
+  if (path) {
+    const record = JSON.parse(fs.readFileSync(path, "utf8"));
+    if (typeof record.endpoint === "string" && record.endpoint.trim() !== "") return record.endpoint;
+    throw new Error("install record endpoint is required");
+  }
+  return "http://127.0.0.1:8787";
 }

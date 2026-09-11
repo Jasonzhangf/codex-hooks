@@ -19,13 +19,26 @@
     "codexapp": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["socket", "required_capabilities"],
+      "required": ["socket", "required_capabilities", "source_address", "target_scopes"],
       "properties": {
         "socket": { "type": "string", "minLength": 1 },
         "required_capabilities": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1
+        },
+        "source_address": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scopeId", "sessionId"],
+          "properties": {
+            "scopeId": { "type": "string", "minLength": 1 },
+            "sessionId": { "type": "string", "minLength": 1 }
+          }
+        },
+        "target_scopes": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 }
         }
       }
     },

@@ -7,15 +7,18 @@ import { HooksDaemon } from "./daemon.js";
 import { JsonStateStore } from "./persistence.js";
 import { DaemonHttpServer } from "./server.js";
 import { loadDaemonConfig } from "./config.js";
+import { CodexAppBridgePort, verifyCodexAppPort } from "./codexapp-port.js";
 
 const options = parseArgs(process.argv.slice(2));
 const config = options.configPath ? loadDaemonConfig(options.configPath) : null;
 const modulePath = options.codexappModule || process.env.ROUTECODEX_CODEXAPP_MODULE;
-if (!modulePath) {
-  throw new Error("--codexapp-module or ROUTECODEX_CODEXAPP_MODULE is required; refusing to start without a real codexapp port");
-}
-
-const codexapp = await loadCodexApp(modulePath, config?.codexapp);
+const codexapp = modulePath
+  ? await loadCodexApp(modulePath, config?.codexapp)
+  : config?.codexapp
+    ? new CodexAppBridgePort(config.codexapp)
+    : null;
+if (!codexapp) throw new Error("a configured codexapp module or bridge socket is required; refusing to start without a real codexapp port");
+await verifyCodexAppPort(codexapp, config?.codexapp?.required_capabilities);
 const stateFile = expandHome(options.stateFile || (config ? join(config.runtime.state_directory, "state.json") : join(homedir(), ".codex", "routecodex-hooks", "state", "state.json")));
 const daemon = new HooksDaemon({ codexapp, store: new JsonStateStore(stateFile) });
 const recovered = daemon.recoverOutbox();

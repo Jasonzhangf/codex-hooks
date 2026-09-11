@@ -6,7 +6,12 @@
   },
   "codexapp": {
     "socket": "~/.codex/routecodex-hooks/codexapp.sock",
-    "required_capabilities": ["session_status", "sendmessage"]
+    "required_capabilities": ["session_status", "send_message_to_thread"],
+    "source_address": { "scopeId": "local:hooks", "sessionId": "hooksd" },
+    "target_scopes": {
+      "codex_tui/tui-appserver": "local:tui",
+      "codex_app/desktop-appserver": "local:desktop"
+    }
   },
   "policies": []
 }

@@ -26,7 +26,7 @@ For each real namespace (`codex_tui`, `codex_app`), record:
 
 ```text
 emitted → provider/native acceptance → target receipt → executed → replied
-→ read with cursor → consumed, when required
+→ read with cursor → consumed ACK, when required
 ```
 
 An accepted queue insertion must not be reported as a reply. Unsupported native
@@ -66,7 +66,7 @@ send. Restart before flush and verify pending recovery without duplicate send.
 - `update_goal` matcher cannot enter ordinary tool policy;
 - input injection uses official `additionalContext` projection;
 - timer wake originates in daemon, not background Hook; the skeleton uses a
-  deterministic clock and persists configured/claimed/deferred/completed state.
+  deterministic clock and persists configured/claimed/deferred/sent state.
 
 ## Persistence and uncertainty
 
@@ -74,7 +74,7 @@ send. Restart before flush and verify pending recovery without duplicate send.
   survive restart;
 - same event/intent concurrent requests produce one native attempt;
 - transport timeout creates `unknown_delivery` and does not blind-retry;
-- reconcile either proves the original delivery or leaves it unresolved;
+- reconcile either proves exactly one next native state or leaves it unresolved;
 - MCP reads all transitions without mutating them;
 - CLI mutation is visible through subsequent MCP query.
 

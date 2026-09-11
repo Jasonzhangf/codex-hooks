@@ -70,7 +70,8 @@ framework process boundary; it does not claim that the supplied module has
 proven native Desktop/TUI delivery.
 
 The tests prove the local command/stdin boundary, HTTP daemon boundary, status
-gate, send/defer/resume behavior, fail-closed states, idempotency, and
+gate, send/defer/resume behavior, fail-closed states, idempotency, the full
+9-state × 2-mode gate matrix, deterministic timer skeleton, and
 Stopless/update-goal kind separation, official event coverage, and the MCP/CLI
 control boundary. They do not claim real TUI/Desktop App-Server or RouteCodex
 managed-lifecycle proof. See

@@ -189,6 +189,50 @@ test("daemon gate executes every session state and send mode in the graph", asyn
   }
 });
 
+test("manual input is an independent suppress gate even for working_allowed", async () => {
+  const codexapp = fakeCodexapp("idle");
+  codexapp.inputActive = true;
+  codexapp.session_status = async () => ({ state: codexapp.state, input_active: codexapp.inputActive });
+  const daemon = new HooksDaemon({ codexapp });
+  const deferred = await daemon.handleHook(event("Stop", { event_id: "manual-input" }), {
+    intent: intent("manual-input", SEND_MODES.WORKING_ALLOWED),
+  });
+  assert.equal(deferred.decision, "deferred");
+  assert.equal(deferred.delivery.evidence.input_active, true);
+  assert.equal(codexapp.sends.length, 0);
+
+  codexapp.inputActive = false;
+  const resumed = await daemon.flushPending(target());
+  assert.equal(resumed.sent.length, 1);
+  assert.equal(codexapp.sends.length, 1);
+});
+
+test("concurrent pending flushes share one send attempt", async () => {
+  const codexapp = fakeCodexapp("working");
+  const store = new MemoryStateStore();
+  const daemon = new HooksDaemon({ codexapp, store });
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  codexapp.send_message = async (input) => {
+    codexapp.sends.push(input);
+    await blocked;
+    return { accepted: true, attempt_id: input.attempt_id };
+  };
+  const first = await daemon.handleHook(event("Stop", { event_id: "flush-race" }), { intent: intent("flush-race", SEND_MODES.IDLE_ONLY) });
+  assert.equal(first.decision, "deferred");
+  codexapp.state = "idle";
+  const flushOne = daemon.flushPending(target());
+  await new Promise((resolve) => setImmediate(resolve));
+  const flushTwo = daemon.flushPending(target());
+  release();
+  const [one, two] = await Promise.all([flushOne, flushTwo]);
+  assert.equal(codexapp.sends.length, 1);
+  assert.equal(one.sent.length, 1);
+  assert.equal(two.sent.length, 0);
+  assert.equal(two.failed.length, 0);
+  assert.equal(store.getIntent("flush-race").state, "accepted");
+});
+
 test("expired intent is recorded without reading status or sending", async () => {
   const codexapp = fakeCodexapp("idle");
   const daemon = new HooksDaemon({ codexapp, now: () => "2026-09-10T12:00:00.000Z" });
@@ -266,6 +310,20 @@ test("uncertain send timeout remains unknown_delivery during initial send and re
   assert.equal(resumed.failed[0].state, "unknown_delivery");
 });
 
+test("restart recovery preserves an in-flight outbox as unknown without blind retry", () => {
+  const codexapp = fakeCodexapp("idle");
+  const store = new MemoryStateStore();
+  const daemon = new HooksDaemon({ codexapp, store });
+  const pending = intent("outbox-crash");
+  store.putIntent(pending.intent_id, { ...pending, state: "emitted", decision: "emitted", intent: pending });
+  const recovered = new HooksDaemon({ codexapp: fakeCodexapp("idle"), store }).recoverOutbox();
+  assert.equal(recovered.length, 1);
+  assert.equal(recovered[0].state, "unknown_delivery");
+  assert.equal(recovered[0].evidence.code, "restart_recovery_requires_reconcile");
+  assert.equal(store.getIntent("outbox-crash").decision, "unknown_delivery");
+  assert.equal(codexapp.sends.length, 0);
+});
+
 test("a malformed native send receipt is rejected", async () => {
   const codexapp = fakeCodexapp("idle");
   codexapp.send_message = async () => ({ accepted: false });
@@ -327,7 +385,7 @@ test("event handling is idempotent and Stopless/update-goal remain separate kind
   assert.equal(goal.kind, "update-goal");
   const stop = await daemon.handleHook(event("Stop", { turn_id: "stop-turn" }));
   assert.equal(stop.kind, "stop");
-  assert.equal(store.transitions.length, 2);
+  assert.equal(store.transitions.length, 3);
 });
 
 test("reusing an intent id with different semantics fails explicitly", async () => {

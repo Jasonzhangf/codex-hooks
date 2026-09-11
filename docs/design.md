@@ -1,7 +1,9 @@
 # RouteCodex Hooks Framework Design
 
 Status: design baseline, framework-only implementation. No Stopless, timer,
-memory, or goal policy is enabled by this document.
+memory, or goal policy is enabled by default. The timer contract includes a
+deterministic scheduler skeleton for state-machine verification; it does not
+provide a product scheduling policy.
 
 ## Decision
 
@@ -66,7 +68,7 @@ ready, the Hook exits with an explicit error and no wake is attempted.
 
 ```text
 capabilities() -> namespace and operation capability set
-session_status(target) -> idle|working|stopping|disconnected|unknown
+session_status(target) -> state + input_active observation
 sendmessage(intent) -> accepted or explicit failure
 status_watch(target) -> status transitions for pending flush
 thread_read(target, cursor) -> later evidence when caller requires it
@@ -103,6 +105,10 @@ on_event(event, own_state) -> zero or more MessageIntent
 The transport layer validates target, checks idempotency, reads status, applies
 the send mode, calls codexapp, and records evidence. The policy never calls
 codexapp directly.
+
+Daemon-originated timer and long-horizon events use the typed internal
+`dispatchIntent` boundary. They are not fabricated official Hook events and
+never pass synthetic lifecycle JSON through the Hook adapter.
 
 Current planned policies:
 

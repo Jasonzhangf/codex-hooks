@@ -9,9 +9,10 @@
     "runtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["socket", "state_directory"],
+      "required": ["host", "port", "state_directory"],
       "properties": {
-        "socket": { "type": "string", "minLength": 1 },
+        "host": { "type": "string", "minLength": 1 },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
         "state_directory": { "type": "string", "minLength": 1 }
       }
     },

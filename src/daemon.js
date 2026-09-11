@@ -10,13 +10,15 @@ import {
   eventKey,
   normalizeHookEvent,
   normalizeIntent,
-  normalizeSessionState,
+  normalizeSessionObservation,
 } from "./protocol.js";
 import { assertCodexAppPort } from "./codexapp-port.js";
+import { projectStopDecision } from "./decision.js";
 
 const DELIVERY = Object.freeze({
   DEFERRED: "deferred",
   EMITTED: "emitted",
+  SENDING: "sending",
   ACCEPTED: "accepted",
   FAILED: "failed",
 });
@@ -79,6 +81,7 @@ export class HooksDaemon {
     this.intentFactory = intentFactory;
     this.inflightEvents = new Map();
     this.inflightIntents = new Map();
+    this.inflightSends = new Map();
   }
 
   async handleHook(rawEvent, { intent: rawIntent = null, kind = null } = {}) {
@@ -98,6 +101,11 @@ export class HooksDaemon {
     } finally {
       this.inflightEvents.delete(key);
     }
+  }
+
+  async dispatchIntent(rawIntent, { kind = "daemon" } = {}) {
+    const intent = normalizeIntent(rawIntent);
+    return this.dispatch({ hook_event_name: `daemon:${kind}` }, kind, intent);
   }
 
   async processHook(event, hookKind, key, rawIntent) {
@@ -149,16 +157,17 @@ export class HooksDaemon {
     }
 
     const observed = await this.codexapp.session_status(intent.target);
-    const state = normalizeSessionState(observed);
+    const observation = normalizeSessionObservation(observed);
+    const state = observation.state;
     if (!SESSION_STATES.includes(state)) return this.fail(event, hookKind, intent, "unknown_session_state", state);
 
     if (FAIL_CLOSED_SESSION_STATES.includes(state)) {
       return this.fail(event, hookKind, intent, `${state}_session`, state);
     }
 
-    if ((state === "working" && intent.send_mode === SEND_MODES.IDLE_ONLY) ||
+    if (observation.input_active || (state === "working" && intent.send_mode === SEND_MODES.IDLE_ONLY) ||
       (DEFERRED_SESSION_STATES.includes(state) && state !== "working")) {
-      const delivery = this.transition(intent, DELIVERY.DEFERRED, { state, at: this.now() });
+      const delivery = this.transition(intent, DELIVERY.DEFERRED, { state, input_active: observation.input_active, at: this.now() });
       const result = this.result(event, hookKind, "deferred", { delivery });
       this.rememberIntent(intent, delivery, "deferred");
       return result;
@@ -174,7 +183,8 @@ export class HooksDaemon {
   async flushPending(target) {
     const normalizedTarget = target;
     const status = await this.codexapp.session_status(normalizedTarget);
-    const state = normalizeSessionState(status);
+    const observation = normalizeSessionObservation(status);
+    const state = observation.state;
     const pending = this.store.listIntents
       ? this.store.listIntents()
       : [...this.store.intents.values()].map(clone);
@@ -193,45 +203,81 @@ export class HooksDaemon {
       });
       return { state, decision: "fail_closed", sent: [], failed };
     }
-    if (!SEND_ELIGIBLE_STATES.includes(state)) return { state, decision: "deferred", sent: [] };
+    if (observation.input_active || !SEND_ELIGIBLE_STATES.includes(state)) return { state, input_active: observation.input_active, decision: "deferred", sent: [] };
 
     const sent = [];
     const failed = [];
     for (const intent of deferred) {
       try {
-        const attemptId = `${intent.intent_id}:resume`;
-        const emitted = this.transition(intent, DELIVERY.EMITTED, { state, attempt_id: attemptId, at: this.now() });
-        const result = await this.codexapp.send_message({ target: intent.target, body: intent.body, attempt_id: attemptId });
-        assertAcceptedReceipt(result);
-        const delivery = this.transition({ ...emitted, native: result }, DELIVERY.ACCEPTED, { state, attempt_id: attemptId, native: result, at: this.now() });
-        this.rememberIntent(intent, delivery, "sent");
-        sent.push(clone(delivery));
+        const result = await this.resumePendingIntent(intent, state);
+        if (result.decision === "sent") sent.push(clone(result.delivery));
+        else failed.push(clone(result.delivery));
       } catch (error) {
-        const deliveryState = isUncertainTransportError(error) ? "unknown_delivery" : DELIVERY.FAILED;
-        const delivery = this.transition(intent, deliveryState, { state, code: error.code || "send_failed", message: error.message, at: this.now() });
-        this.rememberIntent(intent, delivery, deliveryState === "unknown_delivery" ? "unknown_delivery" : "failed");
-        failed.push(clone(delivery));
+        failed.push({ intent_id: intent.intent_id, state: "failed", evidence: { state, code: error.code || "send_failed", message: error.message } });
       }
     }
     return { state, sent, failed };
   }
 
-  async send(event, hookKind, intent, state) {
-    const emitted = this.transition(intent, DELIVERY.EMITTED, { state, at: this.now() });
+  async resumePendingIntent(intent, state) {
+    const existing = this.store.getIntent(intent.intent_id);
+    if (!existing) throw new Error(`deferred intent disappeared: ${intent.intent_id}`);
+    assertSameIntent(existing.intent, intent);
+    const inflight = this.inflightSends.get(intent.intent_id);
+    if (inflight) return { ...(await inflight), idempotent: true };
+    if (existing.decision !== "deferred") return this.result({ hook_event_name: "daemon:resume" }, intent.source, existing.decision, { delivery: existing });
+    const attemptId = `${intent.intent_id}:resume`;
+    const work = this.send({ hook_event_name: "daemon:resume" }, intent.source, intent, state, attemptId);
+    this.inflightSends.set(intent.intent_id, work);
     try {
-      const native = await this.codexapp.send_message({ target: intent.target, body: intent.body, attempt_id: intent.intent_id });
+      return await work;
+    } finally {
+      this.inflightSends.delete(intent.intent_id);
+    }
+  }
+
+  recoverOutbox() {
+    const pending = this.store.listIntents
+      ? this.store.listIntents()
+      : [...this.store.intents.values()].map(clone);
+    const unresolved = pending.filter((record) => ["emitted", "sending"].includes(record.state));
+    return unresolved.map((record) => {
+      const intent = record.intent || record;
+      const delivery = this.transition(intent, "unknown_delivery", {
+        code: "restart_recovery_requires_reconcile",
+        previous_state: record.state,
+        at: this.now(),
+      });
+      this.rememberIntent(intent, delivery, "unknown_delivery");
+      return clone(delivery);
+    });
+  }
+
+  async send(event, hookKind, intent, state, attemptId = intent.intent_id) {
+    const emitted = this.transition(intent, DELIVERY.EMITTED, { state, attempt_id: attemptId, at: this.now() });
+    // Reserve the durable outbox record before crossing the transport
+    // boundary. A crash after this point is unknown delivery, never a reason
+    // to blindly retry the same message.
+    this.rememberIntent(intent, emitted, "emitted");
+    const sending = this.transition(emitted, DELIVERY.SENDING, { state, attempt_id: attemptId, at: this.now() });
+    this.rememberIntent(intent, sending, "sending");
+    try {
+      const native = await this.codexapp.send_message({ target: intent.target, body: intent.body, attempt_id: attemptId });
       assertAcceptedReceipt(native);
-      const accepted = this.transition({ ...emitted, native }, DELIVERY.ACCEPTED, { state, native, at: this.now() });
+      const accepted = this.transition({ ...sending, native }, DELIVERY.ACCEPTED, { state, attempt_id: attemptId, native, at: this.now() });
       this.rememberIntent(intent, accepted, "sent");
       // An external sendmessage wake is not the official Stop continuation
       // protocol. Do not emit `decision:block` or `continue:false` here:
       // neither value is a proof that the separately queued message was
       // delivered or executed. Native Stop continuation is a future,
       // explicitly selected policy with its own replay evidence.
-      return this.result(event, hookKind, "sent", { delivery: accepted, hook_output: {} });
+      const hookOutput = hookKind === "stop"
+        ? projectStopDecision({ action: "inject" }, { externalWakeAccepted: true })
+        : {};
+      return this.result(event, hookKind, "sent", { delivery: accepted, hook_output: hookOutput });
     } catch (error) {
       if (isUncertainTransportError(error)) {
-        const unknown = this.transition(emitted, "unknown_delivery", {
+        const unknown = this.transition(sending, "unknown_delivery", {
           state,
           code: error.code || "unknown_delivery",
           message: error.message,

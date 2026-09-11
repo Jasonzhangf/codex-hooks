@@ -11,7 +11,8 @@
 | Persistence port | `JsonStateStore` restart test | No crash-injection production replay |
 | JSON daemon entry | `daemon-entry.test.js`, `/health` probe | Requires a real supplied CodexApp module |
 | MCP read boundary | `McpStateClient` same-daemon query test | No published MCP server process |
-| CLI mutation boundary | control mutation HTTP contract | No timer tick implementation |
+| CLI mutation boundary | control mutation HTTP contract | Timer tick remains an operator skeleton |
+| Deterministic timer gate | `ManualClock` + `TimerOperator` tests | No recurring/product scheduling policy |
 | TUI/Desktop transport | codexapp repository is the adapter owner | Requires same-entry native replay |
 | Stopless/timer/memory behavior | extension contracts only | Explicitly out of scope |
 | V3 Stopless retirement | RouteCodex candidate and removal gates | Main merge and full V3 gate still separate |

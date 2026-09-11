@@ -1,6 +1,7 @@
 {
   "runtime": {
-    "socket": "~/.codex/routecodex-hooks/hooksd.sock",
+    "host": "127.0.0.1",
+    "port": 8787,
     "state_directory": "~/.codex/routecodex-hooks/state"
   },
   "codexapp": {

@@ -126,11 +126,21 @@ export function normalizeTarget(value) {
 }
 
 export function normalizeSessionState(value) {
+  const state = normalizeSessionObservation(value).state;
+  return state;
+}
+
+export function normalizeSessionObservation(value) {
   const state = typeof value === "string"
     ? value
     : value?.state || value?.status?.type;
-  if (!SESSION_STATES.includes(state)) return "unknown";
-  return state;
+  if (!SESSION_STATES.includes(state)) return { state: "unknown", input_active: false };
+  return {
+    state,
+    input_active: typeof value === "object" && value !== null && (
+      value.input_active === true || value.status?.input_active === true
+    ),
+  };
 }
 
 export function normalizeHookEvent(value) {

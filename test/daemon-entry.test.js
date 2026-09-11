@@ -10,8 +10,14 @@ test("daemon entry requires and loads a real typed codexapp module", async () =>
   const directory = await mkdtemp(join(tmpdir(), "codex-hooks-entry-"));
   const modulePath = join(directory, "codexapp.mjs");
   const statePath = join(directory, "state.json");
+  const configPath = join(directory, "hooksd.json");
   await writeFile(modulePath, "export function createCodexAppPort() { return { session_status: async () => ({ state: 'idle' }), send_message: async ({ attempt_id }) => ({ accepted: true, attempt_id }) }; }\n", "utf8");
-  const child = spawn(process.execPath, ["src/daemon-entry.js", "--port", "0", "--state-file", statePath, "--codexapp-module", modulePath], {
+  await writeFile(configPath, JSON.stringify({
+    runtime: { host: "127.0.0.1", port: 0, state_directory: directory },
+    codexapp: { socket: join(directory, "codexapp.sock"), required_capabilities: ["session_status", "sendmessage"] },
+    policies: [],
+  }), "utf8");
+  const child = spawn(process.execPath, ["src/daemon-entry.js", "--config", configPath, "--state-file", statePath, "--codexapp-module", modulePath], {
     cwd: new URL("..", import.meta.url),
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -19,6 +25,7 @@ test("daemon entry requires and loads a real typed codexapp module", async () =>
     const line = await readLine(child.stdout);
     const ready = JSON.parse(line);
     assert.equal(ready.ready, true);
+    assert.equal(ready.recovered_outbox, 0);
     const health = await fetch(`${ready.endpoint}/health`);
     assert.equal(health.status, 200);
     assert.deepEqual(await health.json(), { protocol: "routecodex-hooks/v1", ready: true });

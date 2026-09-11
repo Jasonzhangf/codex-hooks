@@ -23,6 +23,8 @@ export class FrameworkControlPlane {
     if (operation === "operator.set_enabled") return this.setOperator(request);
     if (operation === "schedule.upsert") return this.upsertSchedule(request);
     if (operation === "schedule.remove") return this.removeSchedule(request);
+    if (operation === "schedule.pause") return this.pauseSchedule(request);
+    if (operation === "schedule.resume") return this.resumeSchedule(request);
     throw new Error(`unsupported control operation: ${operation}`);
   }
 
@@ -43,8 +45,9 @@ export class FrameworkControlPlane {
     const body = assertNonEmpty(request.body, "body");
     const sendMode = request.send_mode || SEND_MODES.IDLE_ONLY;
     if (!Object.values(SEND_MODES).includes(sendMode)) throw new Error(`unsupported send mode: ${sendMode}`);
+    if (Number.isNaN(Date.parse(at))) throw new Error("schedule time must be an ISO timestamp");
     const schedules = this.store.getControl("schedules") || {};
-    schedules[id] = { id, at, target, body, send_mode: sendMode, state: "scheduled" };
+    schedules[id] = { id, at, target, body, send_mode: sendMode, state: "configured", enabled: true };
     this.store.putControl("schedules", schedules);
     return clone(schedules[id]);
   }
@@ -57,5 +60,23 @@ export class FrameworkControlPlane {
     delete schedules[id];
     this.store.putControl("schedules", schedules);
     return { operation: "schedule.remove", removed: clone(removed) };
+  }
+
+  pauseSchedule(request) {
+    const id = assertNonEmpty(request.id, "id");
+    const schedules = this.store.getControl("schedules") || {};
+    if (!Object.hasOwn(schedules, id)) throw new Error(`schedule not found: ${id}`);
+    schedules[id] = { ...schedules[id], enabled: false, state: "disabled" };
+    this.store.putControl("schedules", schedules);
+    return clone(schedules[id]);
+  }
+
+  resumeSchedule(request) {
+    const id = assertNonEmpty(request.id, "id");
+    const schedules = this.store.getControl("schedules") || {};
+    if (!Object.hasOwn(schedules, id)) throw new Error(`schedule not found: ${id}`);
+    schedules[id] = { ...schedules[id], enabled: true, state: "enabled" };
+    this.store.putControl("schedules", schedules);
+    return clone(schedules[id]);
   }
 }

@@ -43,7 +43,8 @@ flowchart TD
   L -->|no intent| R2[return official no-op result]
   L --> M[codexapp.session_status]
   M -->|unknown/disconnected| X5[fail closed; no send]
-  M -->|idle| N[send allowed]
+  M -->|idle and input inactive| N[send allowed]
+  M -->|manual input active| O[deferred; persist pending]
   M -->|working + idle_only| O[deferred; persist pending]
   M -->|working + working_allowed| N
   M -->|stopping| O
@@ -74,13 +75,13 @@ flowchart TD
 | Daemon → codexapp | RouteCodex lifecycle | typed app-server target → capabilities | `connecting → capable` | namespace/appserver mismatch or unsupported capability |
 | Official event → adapter | hook adapter | stdin JSON → validated event | `received → classified` | malformed/unknown event; no daemon mutation |
 | Adapter → daemon | daemon RPC | event + optional intent → decision | event key recorded exactly once | duplicate returns recorded result |
-| Daemon → status | codexapp | target → all nine normalized session states | observation only | unknown/disconnected/failed is fail closed |
+| Daemon → status | codexapp | target → nine states + orthogonal `input_active` | observation only | unknown/disconnected/failed is fail closed; input active defers |
 | Status → send gate | daemon | intent mode + state → send/defer/fail | `created → deferred` or send path | working + `idle_only` never calls send |
-| Daemon → sendmessage | codexapp | target + body + attempt id → native receipt | `emitted → accepted` | exact native error, no silent retry |
+| Daemon → sendmessage | codexapp | target + body + attempt id → native receipt | `emitted → sending → accepted` | exact native error, no silent retry |
 | Stop send → hook result | Stop adapter | accepted send → ordinary official success JSON | current hook ends | `{}`; never claim native continuation |
 | Accepted → delivered | codexapp/daemon | target receipt → native receipt evidence | `accepted → delivered` | acceptance alone remains incomplete |
 | Delivered → reply/read | codexapp/daemon | matching item/turn/cursor → evidence | `delivered → executed → replied → read` | timeout/unchanged cursor/unknown remains incomplete |
-| Timer/longhorizon → intent | daemon policy | due state → intent | `scheduled → due → pending/sent` | no timer feature in this skeleton |
+| Timer/longhorizon → intent | daemon policy | due state → typed internal intent | `scheduled → due → pending/sent` | no fabricated official Hook event |
 | MCP → state | MCP server | query → snapshot | no transition | query cannot send or claim execution |
 | CLI → mutation | CLI | explicit command → daemon mutation | persisted transition | mutation result must be MCP-readable |
 

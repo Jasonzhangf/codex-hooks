@@ -65,7 +65,8 @@ send. Restart before flush and verify pending recovery without duplicate send.
 - `tool_use_id` is required for tool idempotency;
 - `update_goal` matcher cannot enter ordinary tool policy;
 - input injection uses official `additionalContext` projection;
-- timer wake originates in daemon, not background Hook.
+- timer wake originates in daemon, not background Hook; the skeleton uses a
+  deterministic clock and persists configured/claimed/deferred/completed state.
 
 ## Persistence and uncertainty
 

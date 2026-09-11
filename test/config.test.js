@@ -28,3 +28,16 @@ test("daemon config rejects malformed required sections", () => {
   assert.throws(() => validateDaemonConfig({ ...valid, runtime: { ...valid.runtime, host: "" } }), /runtime.host/);
   assert.throws(() => validateDaemonConfig({ ...valid, runtime: { ...valid.runtime, port: 65536 } }), /runtime.port/);
 });
+
+test("daemon config rejects non-loopback control binding", () => {
+  assert.throws(() => validateDaemonConfig({
+    runtime: { host: "0.0.0.0", port: 8787, state_directory: "/tmp/state" },
+    codexapp: {
+      socket: "/tmp/codexapp.sock",
+      required_capabilities: ["session_status"],
+      source_address: { scopeId: "hooks", sessionId: "hooksd" },
+      target_scopes: {},
+    },
+    policies: [],
+  }), /runtime\.host must be loopback-only/);
+});

@@ -192,5 +192,8 @@ function normalizeEndpoint(value) {
   if (!["http:", "https:"].includes(url.protocol) || url.pathname !== "/" || url.search || url.hash) {
     throw new Error("daemon endpoint must be an http(s) origin");
   }
+  if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) {
+    throw new Error("daemon endpoint must use a loopback host");
+  }
   return value.replace(/\/$/, "");
 }

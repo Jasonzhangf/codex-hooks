@@ -17,9 +17,10 @@ export class HooksSupervisor {
   async start() {
     if (this.state === "ready") return this.status();
     if (!["down", "stopped", "crashed", "restarting"].includes(this.state)) throw new Error(`supervisor cannot start from ${this.state}`);
-    if (this.state !== "down") this.state = "restarting";
-    else this.state = "starting_codexapp";
+    const recovering = this.state !== "down";
+    this.state = recovering ? "restarting" : "starting_codexapp";
     try {
+      if (recovering) await this.stopChildren();
       this.codexapp = await this.startCodexapp();
       if (!this.codexapp?.ready) throw new Error("codexapp did not become ready");
       await verifyCodexAppPort(this.codexapp);

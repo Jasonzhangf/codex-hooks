@@ -42,6 +42,49 @@ test("supervisor can restart from stopped and exposes degraded/crashed lifecycle
   assert.equal(supervisor.markCrashed().state, "crashed");
 });
 
+test("supervisor cleans crashed children before restarting", async () => {
+  const events = [];
+  let generation = 0;
+  const supervisor = new HooksSupervisor({
+    startCodexapp: async () => {
+      const current = ++generation;
+      events.push(`codexapp.start.${current}`);
+      return { ready: true, capabilities: async () => ["session_status", "send_message_to_thread"], session_status: async () => ({ state: "idle" }), send_message: async ({ attempt_id }) => ({ accepted: true, attempt_id }), stop: async () => events.push(`codexapp.stop.${current}`) };
+    },
+    startHooksd: async () => {
+      const current = generation;
+      events.push(`hooksd.start.${current}`);
+      return { ready: true, stop: async () => events.push(`hooksd.stop.${current}`) };
+    },
+  });
+
+  await supervisor.start();
+  supervisor.markCrashed();
+  await supervisor.start();
+  assert.deepEqual(events, [
+    "codexapp.start.1",
+    "hooksd.start.1",
+    "hooksd.stop.1",
+    "codexapp.stop.1",
+    "codexapp.start.2",
+    "hooksd.start.2",
+  ]);
+  assert.equal(supervisor.status().state, "ready");
+});
+
+test("supervisor fails closed when crashed child cleanup fails", async () => {
+  const cleanupError = new Error("codexapp cleanup failed");
+  const supervisor = new HooksSupervisor({
+    startCodexapp: async () => ({ ready: true, capabilities: async () => ["session_status", "send_message_to_thread"], session_status: async () => ({ state: "idle" }), send_message: async ({ attempt_id }) => ({ accepted: true, attempt_id }), stop: async () => { throw cleanupError; } }),
+    startHooksd: async () => ({ ready: true, stop: async () => {} }),
+  });
+
+  await supervisor.start();
+  supervisor.markCrashed();
+  await assert.rejects(() => supervisor.start(), (error) => error === cleanupError);
+  assert.equal(supervisor.status().state, "failed");
+});
+
 test("supervisor fails closed and stops codexapp when hooksd cannot become ready", async () => {
   const events = [];
   const supervisor = new HooksSupervisor({

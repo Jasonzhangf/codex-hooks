@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
-import { pathToFileURL } from "node:url";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { join } from "node:path";
 import { HooksDaemon } from "./daemon.js";
 import { JsonStateStore } from "./persistence.js";
 import { DaemonHttpServer } from "./server.js";
@@ -12,13 +11,8 @@ import { normalizeLoopbackHost } from "./endpoint.js";
 
 const options = parseArgs(process.argv.slice(2));
 const config = options.configPath ? loadDaemonConfig(options.configPath) : null;
-const modulePath = options.codexappModule || process.env.ROUTECODEX_CODEXAPP_MODULE;
-const codexapp = modulePath
-  ? await loadCodexApp(modulePath, config?.codexapp)
-  : config?.codexapp
-    ? new CodexAppBridgePort(config.codexapp)
-    : null;
-if (!codexapp) throw new Error("a configured codexapp module or bridge socket is required; refusing to start without a real codexapp port");
+const codexapp = config?.codexapp ? new CodexAppBridgePort(config.codexapp) : null;
+if (!codexapp) throw new Error("a configured codexapp bridge socket is required; refusing to start without the internal codexapp service");
 await verifyCodexAppPort(codexapp, config?.codexapp?.required_capabilities);
 const stateFile = expandHome(options.stateFile || (config ? join(config.runtime.state_directory, "state.json") : join(homedir(), ".codex", "routecodex-hooks", "state", "state.json")));
 const daemon = new HooksDaemon({ codexapp, store: new JsonStateStore(stateFile) });
@@ -40,24 +34,15 @@ async function shutdown() {
 process.once("SIGTERM", () => void shutdown().then(() => process.exit(0)));
 process.once("SIGINT", () => void shutdown().then(() => process.exit(0)));
 
-async function loadCodexApp(value, config = {}) {
-  const absolute = isAbsolute(value) ? value : resolve(value);
-  const loaded = await import(pathToFileURL(absolute).href);
-  const factory = loaded.createCodexAppPort || loaded.default;
-  if (typeof factory !== "function") throw new Error(`codexapp module must export createCodexAppPort(): ${absolute}`);
-  const port = await factory(config);
-  return port;
-}
-
 function parseArgs(args) {
   const options = {};
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index];
-    if (value === "--host" || value === "--port" || value === "--state-file" || value === "--codexapp-module" || value === "--config") {
+    if (value === "--host" || value === "--port" || value === "--state-file" || value === "--config") {
       const next = args[index + 1];
       if (!next || next.startsWith("--")) throw new Error(`${value} requires a value`);
       const key = value.slice(2).replaceAll("-", "_");
-      options[key === "codexapp_module" ? "codexappModule" : key === "state_file" ? "stateFile" : key === "config" ? "configPath" : key] = value === "--port" ? parsePort(next) : next;
+      options[key === "state_file" ? "stateFile" : key === "config" ? "configPath" : key] = value === "--port" ? parsePort(next) : next;
       index += 1;
       continue;
     }

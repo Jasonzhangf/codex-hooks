@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import net from "node:net";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import fs from "node:fs";
@@ -133,15 +134,15 @@ test("init receipt is executable on a clean host through the installed Stop comm
 test("installed Stop command reaches a real hooksd process on a clean host", async () => {
   const codexHome = await mkdtemp(join(tmpdir(), "routecodex-hooks-real-host-"));
   const binDir = join(codexHome, "bin");
-  const modulePath = join(codexHome, "codexapp-port.mjs");
-  await writeFile(modulePath, "export function createCodexAppPort() { return { capabilities: async () => ['session_status', 'send_message_to_thread'], session_status: async () => ({ state: 'idle' }), send_message: async ({ attempt_id }) => ({ accepted: true, attempt_id }) }; }\n", "utf8");
   const port = await freePort();
   let daemon = null;
+  let bridge = null;
   try {
     const init = await run(process.execPath, ["scripts/init.mjs", "--codex-home", codexHome, "--bin-dir", binDir, "--endpoint", `http://127.0.0.1:${port}`]);
     assert.equal(init.code, 0, init.stderr);
     const receipt = JSON.parse(init.stdout);
-    daemon = spawn(receipt.daemon_wrapper, ["--config", receipt.daemon_config, "--codexapp-module", modulePath], {
+    bridge = await startBridgeFixture(loadDaemonConfig(receipt.daemon_config).codexapp.socket);
+    daemon = spawn(receipt.daemon_wrapper, ["--config", receipt.daemon_config], {
       cwd: process.cwd(),
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -167,6 +168,7 @@ test("installed Stop command reaches a real hooksd process on a clean host", asy
       daemon.kill("SIGTERM");
       await once(daemon, "exit");
     }
+    if (bridge) await new Promise((resolve) => bridge.close(resolve));
     await rm(codexHome, { recursive: true, force: true });
   }
 });
@@ -212,4 +214,29 @@ function freePort() {
       server.close((error) => error ? reject(error) : resolve(port));
     });
   });
+}
+
+async function startBridgeFixture(socketPath) {
+  const server = net.createServer((socket) => {
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      let index;
+      while ((index = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, index);
+        buffer = buffer.slice(index + 1);
+        if (!line.trim()) continue;
+        const request = JSON.parse(line);
+        const result = request.method === "capabilities"
+          ? { protocol: "codex-comm/v1", query: ["session_status"], execution: ["send"], namespaces: ["codex_tui", "codex_app"] }
+          : request.method === "status"
+            ? { protocol: "codex-comm/v1", bridge: "up", service_identities: [{ scopeId: "local:hooks", sessionId: "hooksd", kind: "service", live: true }], scopes: [] }
+            : {};
+        socket.write(`${JSON.stringify({ id: request.id, result })}\n`);
+      }
+    });
+  });
+  await new Promise((resolve, reject) => server.listen(socketPath, resolve).once("error", reject));
+  return server;
 }

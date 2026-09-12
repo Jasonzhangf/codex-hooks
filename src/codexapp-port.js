@@ -54,9 +54,11 @@ export function normalizeCodexAppCapabilities(value) {
 // Bridge control methods and the hooks-facing port are different contracts.
 // Keep this explicit mapping at the transport boundary.
 export class CodexAppBridgePort {
-  constructor({ socket, source, source_address: configuredSource, target_scopes = {}, timeout_ms = 10_000 }) {
+  constructor({ socket, source, source_address: configuredSource, source_kind = "appserver", target_scopes = {}, timeout_ms = 10_000 }) {
     this.client = new UnixControlClient(expandHome(assertNonEmpty(socket, "codexapp.socket")), timeout_ms);
     this.source = normalizeBridgeAddress(source || configuredSource, "codexapp.source");
+    if (!["service", "appserver"].includes(source_kind)) throw new Error("codexapp.source_kind must be service or appserver");
+    this.sourceKind = source_kind;
     if (!target_scopes || typeof target_scopes !== "object" || Array.isArray(target_scopes)) {
       throw new Error("codexapp.target_scopes must be an object");
     }
@@ -74,8 +76,12 @@ export class CodexAppBridgePort {
     if (status?.protocol !== "codex-comm/v1" || status.bridge !== "up" || !Array.isArray(status.scopes)) {
       throw new Error("codexapp bridge did not provide live scope status");
     }
-    const sourceScope = findScope(status.scopes, this.source.scopeId);
-    assertSourceScope(sourceScope, this.source);
+    if (this.sourceKind === "service") {
+      assertSourceService(status.service_identities, this.source);
+    } else {
+      const sourceScope = findScope(status.scopes, this.source.scopeId);
+      assertSourceScope(sourceScope, this.source);
+    }
     for (const [key, scopeId] of Object.entries(this.targetScopes)) {
       const [namespace, appserverId] = key.split("/");
       if (!bridge.namespaces.includes(namespace)) throw new Error(`codexapp bridge does not support configured namespace: ${namespace}`);
@@ -228,6 +234,16 @@ function assertSourceScope(scope, source) {
   }
   if (!scope.agents?.some((agent) => agent.sessionId === source.sessionId && agent.live === true)) {
     throw new Error(`codexapp source agent is not live: ${source.scopeId}/${source.sessionId}`);
+  }
+}
+
+function assertSourceService(services, source) {
+  const service = Array.isArray(services)
+    ? services.find((entry) => entry?.scopeId === source.scopeId && entry?.sessionId === source.sessionId)
+    : null;
+  if (!service) throw new Error(`codexapp source service is not registered: ${source.scopeId}/${source.sessionId}`);
+  if (service.kind !== "service" || service.live !== true) {
+    throw new Error(`codexapp source service is not live: ${source.scopeId}/${source.sessionId}`);
   }
 }
 

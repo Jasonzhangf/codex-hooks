@@ -31,7 +31,11 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
       await readFile(join(process.cwd(), "skills", "routecodex-hooks", "SKILL.md"), "utf8"),
     );
     assert.equal((await readFile(first.cli_wrapper, "utf8")).includes(first.source_directory), true);
-    assert.equal(loadDaemonConfig(first.daemon_config).supervisor.enabled, false);
+    const daemonConfig = loadDaemonConfig(first.daemon_config);
+    assert.equal(daemonConfig.supervisor.enabled, false);
+    assert.equal(daemonConfig.supervisor.codexapp.command, "rccv3-codexapp");
+    assert.deepEqual(daemonConfig.supervisor.codexapp.args, ["--socket", daemonConfig.codexapp.socket, "--targets-file", first.codexapp_targets]);
+    assert.equal(daemonConfig.codexapp.source_kind, "service");
 
     const hooksAfterFirst = JSON.parse(await readFile(first.hooks_file, "utf8"));
     assert.equal(hooksAfterFirst.hooks.Stop.length, 2);
@@ -64,6 +68,11 @@ test("init canonicalizes IPv6 loopback endpoint before daemon config validation"
     const configured = await run(record.cli_wrapper, ["config-set", "endpoint", "http://[::1]:8787"]);
     assert.equal(configured.code, 0, configured.stderr);
     assert.equal(loadDaemonConfig(record.daemon_config).runtime.host, "::1");
+    const target = JSON.stringify({ namespace: "codex_tui", appserver_id: "tui-appserver", scope_id: "local:tui", endpoint: "unix:///tmp/tui-appserver.sock" });
+    const targetConfigured = await run(record.cli_wrapper, ["config-set", "target", target]);
+    assert.equal(targetConfigured.code, 0, targetConfigured.stderr);
+    assert.deepEqual(JSON.parse(await readFile(record.codexapp_targets, "utf8")), [JSON.parse(target)]);
+    assert.equal(loadDaemonConfig(record.daemon_config).codexapp.target_scopes["codex_tui/tui-appserver"], "local:tui");
   } finally {
     await rm(codexHome, { recursive: true, force: true });
   }

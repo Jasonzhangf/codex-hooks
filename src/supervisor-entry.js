@@ -45,8 +45,12 @@ process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 
 async function startCodexapp(currentConfig) {
+  const internalCommand = process.env.ROUTECODEX_V3_CODEXAPP_BINARY;
+  const spec = internalCommand
+    ? { ...currentConfig.supervisor.codexapp, command: internalCommand }
+    : currentConfig.supervisor.codexapp;
   const processHandle = await startProcess(
-    currentConfig.supervisor.codexapp,
+    spec,
     "codexapp",
     timeoutMs,
     isCodexAppReady,

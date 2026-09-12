@@ -1,13 +1,13 @@
 # CodexApp Transport Boundary
 
-`codexapp` is an independent internal component. It owns namespace routing for
+`codexapp` is an independent component built into RouteCodex V3. It owns namespace routing for
 `codex_tui` and `codex_app`, native App Server capability checks, running-state
 observation, `sendmessage`, and native transport error mapping.
 
-The current codexapp project exposes a `codex-comm/v1` Unix control bridge.
-Its control methods are `session_status` and `send`; the hooks-facing typed
-port advertises `session_status` and `send_message_to_thread`. The mapping is
-explicit and local to `CodexAppBridgePort`. `target_scopes` explicitly maps
+The RouteCodex-internal `rccv3-codexapp` exposes a `codex-comm/v1` Unix control
+bridge. Its control methods are `session_status` and `send`; the hooks-facing
+typed port advertises `session_status` and `send_message_to_thread`. The
+mapping is explicit and local to `CodexAppBridgePort`. `target_scopes` maps
 `<namespace>/<appserver_id>` to a registered bridge scope, and the configured
 source address must already be a registered bridge agent.
 

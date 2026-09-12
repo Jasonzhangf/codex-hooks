@@ -49,13 +49,11 @@ share Stopless counters, timer state, or a generic post-turn handler.
 
 ## Local verification
 
-To let routecodex start own the complete sidecar order, configure the local
-CodexApp daemon command and enable the supervisor. The supervisor starts
-CodexApp, verifies its advertised bridge and registered identities, then starts
-hooksd; shutdown is always hooksd first and CodexApp second.
+To let RouteCodex own the complete sidecar order, enable the supervisor with
+the RouteCodex-internal `rccv3-codexapp`. The supervisor verifies its
+advertised bridge and registered identities, then starts hooksd; shutdown is
+always hooksd first and CodexApp second.
 
-    routecodex-hooks config-set codexapp_command /absolute/path/to/codex-comm
-    routecodex-hooks config-set codexapp_args '["daemon","start","--socket","/absolute/path/to/commd.sock"]'
     routecodex-hooks supervisor-enable
 
 The installed supervisor entry is routecodex-hooks-supervisor --config
@@ -89,6 +87,7 @@ The installed CLI owns configuration and switches:
 ```bash
 routecodex-hooks config-show
 routecodex-hooks config-set endpoint http://127.0.0.1:8787
+routecodex-hooks config-set target '{"namespace":"codex_tui","appserver_id":"tui-appserver","scope_id":"local:tui","endpoint":"unix:///path/to/app-server-control.sock"}'
 routecodex-hooks hook-disable stop
 routecodex-hooks hook-enable stop
 ```
@@ -102,7 +101,7 @@ for the RouteCodex lifecycle supervisor:
 
 ```bash
 routecodex-hooksd --config ~/.codex/routecodex-hooks/config/hooksd.json \
-  --codexapp-module /absolute/path/to/codexapp-port.mjs
+  --state-file ~/.codex/routecodex-hooks/state/state.json
 ```
 
 ```bash
@@ -110,13 +109,11 @@ npm run check
 npm test
 ```
 
-The daemon entry point accepts either a real typed CodexApp port module or the
-existing codexapp Unix control bridge. It never starts with a fake or guessed
-transport:
+The daemon entry point accepts the RouteCodex-internal CodexApp Unix control
+bridge. It never starts with a fake or guessed transport:
 
 ```bash
-node src/daemon-entry.js --port 8787 \
-  --codexapp-module /absolute/path/to/codexapp-port.mjs
+node src/daemon-entry.js --port 8787 --config config/hooksd.example.json
 ```
 
 Bridge mode uses `codexapp.socket`, a registered `source_address`, and
@@ -125,10 +122,9 @@ explicit `target_scopes` entries such as
 [`config/hooksd.example.json`](config/hooksd.example.json). The adapter maps
 the bridge `send` method to the typed `send_message_to_thread` capability.
 
-The module must export `createCodexAppPort()` returning typed
-`session_status(target)` and `send_message(request)` functions. The daemon
-persists to a JSON state file and exposes `/health`, `/v1/hooks/dispatch`,
-`/v1/state`, `/v1/delivery/evidence`, and the read/mutation control endpoints.
+The daemon persists to a JSON state file and exposes `/health`,
+`/v1/hooks/dispatch`, `/v1/state`, `/v1/delivery/evidence`, and the read/mutation
+control endpoints.
 The delivery endpoint accepts only one exact native-evidence transition at a
 time. The entry point is a framework process boundary; it does not claim that the supplied module has
 proven native Desktop/TUI delivery.

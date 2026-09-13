@@ -19,6 +19,7 @@ export function installPaths({ codexHome = join(homedir(), ".codex"), binDir = j
     stateDirectory: join(installRoot, "state"),
     installRecord: join(installRoot, "install.json"),
     daemonConfig: join(installRoot, "config", "hooksd.json"),
+    codexappTargets: join(installRoot, "config", "codexapp-targets.json"),
     hooksFile: join(home, "hooks.json"),
     skillsDirectory: join(home, "skills"),
     binDirectory: resolve(binDir),
@@ -38,7 +39,7 @@ export function readInstallRecord({ codexHome, installRecord } = {}) {
   }
 }
 
-export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "http://127.0.0.1:8787", stopHookEnabled = true, supervisorEnabled, codexappCommand, codexappArgs } = {}) {
+export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "http://127.0.0.1:8787", stopHookEnabled = true, supervisorEnabled } = {}) {
   if (typeof sourceRoot !== "string" || sourceRoot.trim() === "") throw new Error("source root is required");
   const source = resolve(sourceRoot);
   const paths = installPaths({ codexHome, binDir });
@@ -53,9 +54,10 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
   copyDirectory(join(source, "skills"), paths.skillsDirectory);
   ensureDirectory(paths.configDirectory);
   ensureDirectory(paths.stateDirectory);
+  writeJson(paths.codexappTargets, readJsonIfExists(previous?.codexapp_targets) || []);
   ensureDirectory(paths.binDirectory);
 
-  const daemonConfig = buildDaemonConfig({ paths, endpoint: normalizedEndpoint, previous: readJsonIfExists(previous?.daemon_config), supervisorEnabled, codexappCommand, codexappArgs });
+  const daemonConfig = buildDaemonConfig({ paths, endpoint: normalizedEndpoint, previous: readJsonIfExists(previous?.daemon_config), supervisorEnabled });
   writeJson(paths.daemonConfig, daemonConfig);
   writeExecutable(paths.cliWrapper, wrapperSource(paths.sourceDirectory, "cli.js", paths.installRecord));
   writeExecutable(paths.mcpWrapper, wrapperSource(paths.sourceDirectory, "mcp-server.js", paths.installRecord));
@@ -76,6 +78,7 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
     skills_directory: paths.skillsDirectory,
     hooks_file: paths.hooksFile,
     daemon_config: paths.daemonConfig,
+    codexapp_targets: paths.codexappTargets,
     state_directory: paths.stateDirectory,
     endpoint: normalizedEndpoint.endpoint,
     stop_hook_enabled: stopHookEnabled,
@@ -115,17 +118,18 @@ export function recordPath(record) {
   return join(record.install_root, "install.json");
 }
 
-function buildDaemonConfig({ paths, endpoint, previous, supervisorEnabled, codexappCommand, codexappArgs }) {
+function buildDaemonConfig({ paths, endpoint, previous, supervisorEnabled }) {
   const normalized = typeof endpoint === "string" ? normalizeLoopbackEndpoint(endpoint) : endpoint;
   const old = previous && typeof previous === "object" ? previous : {};
   const oldSupervisor = old.supervisor && typeof old.supervisor === "object" ? old.supervisor : {};
-  const oldCodexappProcess = oldSupervisor.codexapp && typeof oldSupervisor.codexapp === "object" ? oldSupervisor.codexapp : {};
+  const codexappSocket = old.codexapp?.socket || join(paths.installRoot, "codexapp.sock");
+  const codexappTargets = paths.codexappTargets;
   const supervisor = {
     enabled: supervisorEnabled ?? oldSupervisor.enabled ?? false,
     startup_timeout_ms: oldSupervisor.startup_timeout_ms || 10000,
     codexapp: {
-      command: codexappCommand ?? oldCodexappProcess.command ?? null,
-      args: codexappArgs ?? oldCodexappProcess.args ?? [],
+      command: "rccv3-codexapp",
+      args: ["--socket", codexappSocket, "--targets-file", codexappTargets],
     },
     hooksd: {
       command: oldSupervisor.hooksd?.command || paths.daemonWrapper,
@@ -139,13 +143,12 @@ function buildDaemonConfig({ paths, endpoint, previous, supervisorEnabled, codex
       state_directory: paths.stateDirectory,
     },
     codexapp: {
-      socket: old.codexapp?.socket || join(paths.installRoot, "codexapp.sock"),
+      socket: codexappSocket,
       required_capabilities: old.codexapp?.required_capabilities || ["session_status", "send_message_to_thread"],
+      source_kind: old.codexapp?.source_kind || "service",
+      targets_file: codexappTargets,
       source_address: old.codexapp?.source_address || { scopeId: "local:hooks", sessionId: "hooksd" },
-      target_scopes: old.codexapp?.target_scopes || {
-        "codex_tui/tui-appserver": "local:tui",
-        "codex_app/desktop-appserver": "local:desktop",
-      },
+      target_scopes: old.codexapp?.targets_file ? (old.codexapp.target_scopes || {}) : {},
     },
     policies: old.policies || [],
     supervisor,

@@ -20,6 +20,7 @@ routecodex-hooks config-set codexapp_socket /path/to/codexapp.sock
 routecodex-hooks config-set source_scope local:hooks
 routecodex-hooks config-set source_session hooksd
 routecodex-hooks config-set target_scope codex_tui/tui-appserver=local:tui
+routecodex-hooks config-set target '{"namespace":"codex_tui","appserver_id":"tui-appserver","scope_id":"local:tui","endpoint":"unix:///path/to/app-server-control.sock"}'
 routecodex-hooks hook-disable stop
 routecodex-hooks hook-enable stop
 ```
@@ -29,19 +30,17 @@ CLI changes configuration and operator/schedule switches. MCP is query-only: reg
 The hook receives official JSON on stdin and forwards it to hooksd. hooksd owns policy state, persistence, idempotency, running-state gating, and the send decision; codexapp is the only message sender. An idle-only intent is deferred while the target is working or input-active. Unknown or disconnected state fails closed. A Stop event with `stop_hook_active: true` is guarded before an intent is created.
 
 The installed `routecodex-hooksd` wrapper is the daemon process entry for the
-RouteCodex lifecycle supervisor. It must be started with a real CodexApp port
-module or the configured local bridge; a missing or unverifiable CodexApp port
-is a startup failure, not a ready state.
+RouteCodex lifecycle supervisor. It must be started with the
+RouteCodex-internal `rccv3-codexapp` port; a missing or unverifiable CodexApp
+port is a startup failure, not a ready state.
 
-For RouteCodex-managed startup, configure the local CodexApp daemon command
-and enable routecodex-hooks-supervisor; its order is CodexApp ready → hooksd
+For RouteCodex-managed startup, enable routecodex-hooks-supervisor; init wires
+the internal `rccv3-codexapp` command and its service socket. Its order is CodexApp ready → hooksd
 ready, and its shutdown order is hooksd → CodexApp.
 
-    routecodex-hooks config-set codexapp_command /absolute/path/to/codex-comm
-    routecodex-hooks config-set codexapp_args '["daemon","start","--socket","/absolute/path/to/commd.sock"]'
     routecodex-hooks supervisor-enable
 
-An external `codexapp.sendmessage` wake and official Stop `decision: "block"` are mutually exclusive. The external path returns ordinary successful hook output and does not claim delivery or execution. Do not use `continue: false` as delivery evidence. A non-zero hook exit means the daemon rejected or could not safely process the event.
+An internal `codexapp.sendmessage` wake and official Stop `decision: "block"` are mutually exclusive. The send path returns ordinary successful hook output and does not claim delivery or execution. Do not use `continue: false` as delivery evidence. A non-zero hook exit means the daemon rejected or could not safely process the event.
 
 This framework implements the official Stop hook path, daemon state/persistence
 boundaries, CodexApp bridge contract, CLI configuration/switch controls, MCP

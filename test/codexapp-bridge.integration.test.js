@@ -1,33 +1,20 @@
 import assert from "node:assert/strict";
+import net from "node:net";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { CommunicationBridge, BridgeServer } from "/Users/fanzhang/github/codexapp/src/bridge.js";
-import { MockAppServerAdapter } from "/Users/fanzhang/github/codexapp/src/mock-adapter.js";
 import { CodexAppBridgePort } from "../src/codexapp-port.js";
 import { HooksDaemon } from "../src/daemon.js";
 
-test("hooksd closes the real codexapp bridge control loop with explicit identity mapping", async () => {
+test("hooksd accepts the internal codexapp service identity contract", async () => {
   const socketPath = join(tmpdir(), `codex-hooks-bridge-${process.pid}.sock`);
-  const bridge = new CommunicationBridge({
-    adapterFactory: (config) => new MockAppServerAdapter({
-      appserverId: config.appserverId,
-      namespace: config.namespace,
-      sessions: config.sessionIds.map((id) => ({ id })),
-    }),
-  });
-  const server = new BridgeServer(bridge, socketPath);
-  await server.listen();
+  const server = await startInternalBridgeFixture(socketPath);
   try {
-    await bridge.registerScope({ scopeId: "local:hooks", appserverId: "hooks-appserver", namespace: "codex_tui", endpoint: "mock://hooks", sessionIds: ["hooksd"] });
-    await bridge.registerScope({ scopeId: "local:tui", appserverId: "tui-appserver", namespace: "codex_tui", endpoint: "mock://tui", sessionIds: ["thread-1"] });
-    await bridge.registerAgent({ scopeId: "local:hooks", sessionId: "hooksd", agentId: "hooksd", role: "master" });
-    await bridge.registerAgent({ scopeId: "local:tui", sessionId: "thread-1", agentId: "tui-master", role: "master" });
-
     const codexapp = new CodexAppBridgePort({
       socket: socketPath,
       source: { scopeId: "local:hooks", sessionId: "hooksd" },
+      source_kind: "service",
       target_scopes: { "codex_tui/tui-appserver": "local:tui" },
     });
     assert.deepEqual(await codexapp.capabilities(), ["session_status", "send_message_to_thread"]);
@@ -50,9 +37,63 @@ test("hooksd closes the real codexapp bridge control loop with explicit identity
     assert.equal(result.delivery.state, "delivered");
     assert.equal(result.delivery.evidence.target_receipt.clientId, "bridge-attempt-1");
   } finally {
-    await bridge.unregisterScope("local:tui").catch(() => {});
-    await bridge.unregisterScope("local:hooks").catch(() => {});
-    await new Promise((resolve) => server.close().then(resolve));
+    await new Promise((resolve) => server.close(resolve));
     await rm(socketPath, { force: true });
   }
 });
+
+async function startInternalBridgeFixture(socketPath) {
+  const server = net.createServer((socket) => {
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      let index;
+      while ((index = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, index);
+        buffer = buffer.slice(index + 1);
+        if (!line.trim()) continue;
+        const request = JSON.parse(line);
+        socket.write(`${JSON.stringify({ id: request.id, result: fixtureResponse(request.method, request.params || {}) })}\n`);
+      }
+    });
+  });
+  await new Promise((resolve, reject) => server.listen(socketPath, resolve).once("error", reject));
+  return server;
+}
+
+function fixtureResponse(method, params) {
+  if (method === "capabilities") return {
+    protocol: "codex-comm/v1",
+    execution: ["register_target", "send"],
+    query: ["session_status", "message_status", "status", "capabilities"],
+    namespaces: ["codex_app", "codex_tui"],
+  };
+  if (method === "status") return {
+    protocol: "codex-comm/v1",
+    bridge: "up",
+    service_identities: [{ scopeId: "local:hooks", sessionId: "hooksd", kind: "service", live: true }],
+    scopes: [{ scopeId: "local:tui", appserverId: "tui-appserver", namespace: "codex_tui", capabilities: ["session_status", "send_message_to_thread"] }],
+  };
+  if (method === "session_status") return {
+    address: params.address,
+    scopeId: "local:tui",
+    appserverId: "tui-appserver",
+    namespace: "codex_tui",
+    status: { state: "idle", input_active: false },
+  };
+  if (method === "send") {
+    const message = params.message || params;
+    return {
+      protocol: "codex-comm/v1",
+      messageId: message.messageId,
+      attemptId: message.attemptId,
+      from: message.from,
+      to: message.to,
+      routing: { requestedTo: message.to, routedTo: message.to },
+      state: "delivered",
+      evidence: [{ state: "delivered", targetReceipt: { clientId: message.messageId } }],
+    };
+  }
+  throw new Error(`fixture does not implement ${method}`);
+}

@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
-import { join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { loadDaemonConfig } from "./config.js";
 import { CodexAppBridgePort, verifyCodexAppPort } from "./codexapp-port.js";
 import { HooksSupervisor } from "./supervisor.js";
@@ -45,8 +45,22 @@ process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 
 async function startCodexapp(currentConfig) {
+  const internalCommand = process.env.ROUTECODEX_V3_CODEXAPP_BINARY;
+  if (!internalCommand) throw new Error("RouteCodex internal codexapp executable is required");
+  if (!isAbsolute(internalCommand) || basename(internalCommand) !== "rccv3-codexapp") {
+    throw new Error(`RouteCodex internal codexapp executable is invalid: ${internalCommand}`);
+  }
+  let executable;
+  try {
+    executable = fs.realpathSync(internalCommand);
+    const stat = fs.statSync(executable);
+    if (!stat.isFile() || (stat.mode & 0o111) === 0) throw new Error("not executable");
+  } catch (error) {
+    throw new Error(`RouteCodex internal codexapp executable is unavailable: ${internalCommand}: ${error.message}`);
+  }
+  const spec = { ...currentConfig.supervisor.codexapp, command: internalCommand };
   const processHandle = await startProcess(
-    currentConfig.supervisor.codexapp,
+    spec,
     "codexapp",
     timeoutMs,
     isCodexAppReady,

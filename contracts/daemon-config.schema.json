@@ -22,6 +22,8 @@
       "required": ["socket", "required_capabilities", "source_address", "target_scopes"],
       "properties": {
         "socket": { "type": "string", "minLength": 1 },
+        "source_kind": { "enum": ["service", "appserver"] },
+        "targets_file": { "type": "string", "minLength": 1 },
         "required_capabilities": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },

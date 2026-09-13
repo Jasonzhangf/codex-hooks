@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -23,7 +23,9 @@ const codexappSource = [
 test("installed supervisor starts codexapp before hooksd and exits cleanly in reverse order", async () => {
   const root = await mkdtemp(join(tmpdir(), "routecodex-hooks-supervisor-"));
   const socket = join(root, "codexapp.sock");
+  const internalBinary = join(root, "rccv3-codexapp");
   const configPath = join(root, "hooksd.json");
+  await symlink(process.execPath, internalBinary);
   const idleChild = "console.log(JSON.stringify({ready:true}));setInterval(()=>{},1000);";
   await writeFile(configPath, JSON.stringify({
     runtime: { host: "127.0.0.1", port: 0, state_directory: join(root, "state") },
@@ -41,7 +43,7 @@ test("installed supervisor starts codexapp before hooksd and exits cleanly in re
       hooksd: { command: process.execPath, args: ["-e", idleChild] },
     },
   }) + "\n");
-  const child = spawn(process.execPath, ["src/supervisor-entry.js", "--config", configPath], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, ["src/supervisor-entry.js", "--config", configPath], { env: { ...process.env, ROUTECODEX_V3_CODEXAPP_BINARY: internalBinary }, stdio: ["ignore", "pipe", "pipe"] });
   try {
     const ready = JSON.parse(await readLine(child.stdout));
     assert.deepEqual(ready, { protocol: "routecodex-hooks-supervisor/v1", ready: true, state: "ready" });
@@ -59,7 +61,9 @@ test("installed supervisor starts codexapp before hooksd and exits cleanly in re
 test("installed supervisor cleans a child that fails readiness before handle registration", async () => {
   const root = await mkdtemp(join(tmpdir(), "routecodex-hooks-supervisor-failed-ready-"));
   const pidFile = join(root, "codexapp.pid");
+  const internalBinary = join(root, "rccv3-codexapp");
   const configPath = join(root, "hooksd.json");
+  await symlink(process.execPath, internalBinary);
   const codexappSource = `const fs=require('fs');fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));console.log(JSON.stringify({ready:false}));setInterval(()=>{},1000);`;
   await writeFile(configPath, JSON.stringify({
     runtime: { host: "127.0.0.1", port: 0, state_directory: join(root, "state") },
@@ -77,7 +81,7 @@ test("installed supervisor cleans a child that fails readiness before handle reg
       hooksd: { command: process.execPath, args: ["-e", "console.log(JSON.stringify({ready:true}));setInterval(()=>{},1000);"] },
     },
   }) + "\n");
-  const child = spawn(process.execPath, ["src/supervisor-entry.js", "--config", configPath], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, ["src/supervisor-entry.js", "--config", configPath], { env: { ...process.env, ROUTECODEX_V3_CODEXAPP_BINARY: internalBinary }, stdio: ["ignore", "pipe", "pipe"] });
   try {
     const [code] = await once(child, "exit");
     assert.notEqual(code, 0);

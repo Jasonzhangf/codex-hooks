@@ -26,7 +26,7 @@ export function validateDaemonConfig(value) {
   assertString(value.runtime.state_directory, "runtime.state_directory");
 
   assertObject(value.codexapp, "codexapp");
-  assertKeys(value.codexapp, ["socket", "required_capabilities", "source_address", "target_scopes"], "codexapp");
+  assertKeys(value.codexapp, ["socket", "required_capabilities", "source_address", "target_scopes"], "codexapp", ["source_kind", "targets_file"]);
   assertString(value.codexapp.socket, "codexapp.socket");
   if (!Array.isArray(value.codexapp.required_capabilities) || value.codexapp.required_capabilities.length === 0) {
     throw new Error("codexapp.required_capabilities must be a non-empty array");
@@ -36,6 +36,10 @@ export function validateDaemonConfig(value) {
   assertKeys(value.codexapp.source_address, ["scopeId", "sessionId"], "codexapp.source_address");
   assertString(value.codexapp.source_address.scopeId, "codexapp.source_address.scopeId");
   assertString(value.codexapp.source_address.sessionId, "codexapp.source_address.sessionId");
+  if (value.codexapp.source_kind !== undefined && !["service", "appserver"].includes(value.codexapp.source_kind)) {
+    throw new Error("codexapp.source_kind must be service or appserver");
+  }
+  if (value.codexapp.targets_file !== undefined) assertString(value.codexapp.targets_file, "codexapp.targets_file");
   assertObject(value.codexapp.target_scopes, "codexapp.target_scopes");
   for (const [key, scopeId] of Object.entries(value.codexapp.target_scopes)) assertString(scopeId, `codexapp.target_scopes.${key}`);
 

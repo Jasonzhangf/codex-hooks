@@ -49,7 +49,8 @@ test("internal codexapp initializes the native App Server before target reads an
       clientInfo: { name: "rccv3-codexapp", title: "RouteCodex Hooks CodexApp", version: "0.1.0" },
       capabilities: { experimentalApi: true },
     });
-    assert.deepEqual(calls.slice(1, 3), [
+    assert.deepEqual(calls.slice(1, 4), [
+      ["thread/read", { threadId: "thread-1" }],
       ["thread/read", { threadId: "thread-1" }],
       ["thread/items/list", { threadId: "thread-1", limit: 100, sortDirection: "desc" }],
     ]);
@@ -94,8 +95,17 @@ test("internal codexapp preserves the first unsupported history read error", asy
       namespace: "codex_app",
       endpoint: `unix://${appserverSocket}`,
     });
+    assert.deepEqual((await control(controlSocket, "session_status", { address: { scopeId: "local:test", sessionId: "thread-1" } })).status, { state: "idle", input_active: false });
     await assert.rejects(
-      control(controlSocket, "session_status", { address: { scopeId: "local:test", sessionId: "thread-1" } }),
+      control(controlSocket, "send", {
+        message: {
+          messageId: "message-1",
+          attemptId: "message-1",
+          from: { scopeId: "local:hooks", sessionId: "hooksd" },
+          to: { scopeId: "local:test", sessionId: "thread-1" },
+          body: "probe",
+        },
+      }),
       (error) => error.code === "native_read_unsupported"
         && error.message.includes("thread/items/list unsupported")
         && error.message.includes("thread/turns/list unsupported"),
@@ -137,6 +147,56 @@ test("internal codexapp discovers loaded threads without calling thread/list", a
     });
     assert.deepEqual(calls.filter(([method]) => method === "thread/list"), []);
     assert.deepEqual(calls.find(([method]) => method === "thread/loaded/list"), ["thread/loaded/list", {}]);
+  } finally {
+    codexapp.kill("SIGTERM");
+    await once(codexapp, "exit");
+    await new Promise((resolve) => native.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("internal codexapp allows an unmaterialized thread first send with explicit empty baseline", async () => {
+  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-empty-baseline-"));
+  const appserverSocket = join(root, "appserver.sock");
+  const controlSocket = join(root, "codexapp.sock");
+  const calls = [];
+  const native = await startNativeFixture(appserverSocket, calls, {
+    threadExtras: { canAcceptDirectInput: true, turns: [] },
+    itemsError: { code: -32601, message: "thread/items/list is not supported yet" },
+    turnsError: { code: -32601, message: "thread thread-1 is not materialized yet; thread/turns/list is unavailable before first user message" },
+  });
+  const codexapp = spawn(process.execPath, [
+    "src/codexapp-entry.js",
+    "--socket", controlSocket,
+    "--targets-file", join(root, "targets.json"),
+  ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await readLine(codexapp.stdout);
+    await control(controlSocket, "register_target", {
+      scope_id: "local:test",
+      appserver_id: "test-appserver",
+      namespace: "codex_app",
+      endpoint: `unix://${appserverSocket}`,
+    });
+    const status = await control(controlSocket, "session_status", {
+      address: { scopeId: "local:test", sessionId: "thread-1" },
+    });
+    assert.deepEqual(status.status, { state: "idle", input_active: false });
+    const sent = await control(controlSocket, "send", {
+      message: {
+        messageId: "message-1",
+        attemptId: "message-1",
+        from: { scopeId: "local:hooks", sessionId: "hooksd" },
+        to: { scopeId: "local:test", sessionId: "thread-1" },
+        body: "probe",
+      },
+    });
+    assert.equal(sent.state, "accepted");
+    assert.deepEqual(sent.baseline, {
+      state: "empty",
+      reason: "thread history read is unsupported: items=thread/items/list is not supported yet; turns=thread thread-1 is not materialized yet; thread/turns/list is unavailable before first user message",
+      status: { state: "idle", input_active: false },
+    });
   } finally {
     codexapp.kill("SIGTERM");
     await once(codexapp, "exit");
@@ -282,7 +342,7 @@ async function startNativeFixture(socketPath, calls, options = {}) {
         calls.push([request.method, request.params]);
         let response;
         if (request.method === "initialize") response = { result: { userAgent: "fixture" } };
-        else if (request.method === "thread/read") response = { result: { thread: { id: request.params.threadId, status: { type: "idle" }, turns: [] } } };
+        else if (request.method === "thread/read") response = { result: { thread: { id: request.params.threadId, status: { type: "idle" }, turns: [], ...(options.threadExtras || {}) } } };
         else if (request.method === "thread/loaded/list") response = { result: { data: ["thread-1"], nextCursor: null } };
         else if (request.method === "thread/items/list") response = options.itemsError
           ? { error: options.itemsError }

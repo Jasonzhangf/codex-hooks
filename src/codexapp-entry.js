@@ -142,7 +142,7 @@ function unregisterTarget(input) {
 
 async function sessionStatus(address) {
   const { target, sessionId } = resolveTarget(address);
-  const thread = await adapter(target).thread(target, sessionId);
+  const thread = await adapter(target).threadStatus(sessionId);
   return {
     address: { scopeId: target.scope_id, sessionId },
     scopeId: target.scope_id,
@@ -196,8 +196,22 @@ async function sendMessage(input) {
     },
   };
   messages.set(message.messageId, messageRecord);
-  const baseline = await adapter(target).thread(target, sessionId);
-  messageRecord.baseline = itemIds(baseline.items);
+  try {
+    const baseline = await adapter(target).thread(target, sessionId);
+    messageRecord.baseline = {
+      state: "read",
+      items: itemIds(baseline.items),
+      cursor: baseline.cursor,
+    };
+  } catch (error) {
+    if (!isUnmaterializedBaselineError(error)) throw error;
+    const status = await adapter(target).threadStatus(sessionId);
+    messageRecord.baseline = {
+      state: "empty",
+      reason: error.message,
+      status: normalizeThreadStatus(status.status),
+    };
+  }
   const native = await adapter(target).send(target, sessionId, message.body, message.messageId);
   messageRecord.nativeResult = native;
   messageRecord.state = "accepted";
@@ -245,7 +259,13 @@ function publicMessage(message) {
     state: message.state,
     nativeResult: message.nativeResult,
     evidence: message.evidence,
+    baseline: message.baseline,
   };
+}
+
+function isUnmaterializedBaselineError(error) {
+  return error?.code === "native_read_unsupported"
+    && (error.message.includes("not materialized") || error.message.includes("before first user message"));
 }
 
 function publicScope(target) {

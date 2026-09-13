@@ -30,7 +30,13 @@ route reached native receipt/execution/reply/read evidence.
 | Native TUI two-thread bidirectional delivery | default TUI App Server trace, 2026-09-13 (`A_TO_B_CROSS_1789310703_7b3d`, `B_TO_A_CROSS_1789310703_2e8c`) | pass-adapter |
 | RouteCodex managed startup | RouteCodex lifecycle owner and installed replay | pending-live |
 | Real TUI send/status/reply/read via same-entry hook-to-native | default TUI App Server trace, 2026-09-13 (`SAME_ENTRY_HOOK_TO_A_1789319103`, `SAME_ENTRY_HOOK_TO_B3_1789319549`; daemon state `read`, native cursor and `readItemId`) | pass-live |
-| Real Desktop send/status/reply/ACK | running native Desktop App Server endpoint and same-entry trace | pending-live |
+| Real Desktop send/status/reply/read via same-entry hook-to-native | default Desktop App Server trace, 2026-09-13 (`SAME_ENTRY_DESKTOP2_1789320180` on thread `01a09bc7-6a66-7271-8bbb-6446b727b503`; empty-baseline first send, daemon state `read`) | pass-live |
+| Unmaterialized desktop thread first-send empty baseline | default Desktop App Server trace, 2026-09-13 (`SAME_ENTRY_DESKTOP2_1789320180`; adapter baseline `{ state: "empty" }` before first queue/add) | pass-live |
+| `idle_only` while target is working suppresses native send | default TUI App Server trace, 2026-09-13 (`WORKING_IDLE_ONLY_1789320995`: daemon `deferred`, codexapp `message_not_found`) | pass-live |
+| `working_allowed` while target is working sends once | default TUI App Server trace, 2026-09-13 (`WORKING_ALLOWED_LIVE_1789321365`: daemon `sent`, native status `working`, native `accepted`) | pass-live |
+| Duplicate Stop event does not duplicate delivery | default TUI App Server trace, 2026-09-13 (`DUP2_FIRST_1789321398`, `DUP2_SECOND_1789321398`: one delivery, second message `message_not_found`) | pass-live |
+| Unknown/disconnected sessions fail closed | `test/framework.test.js` working/send matrix and fail-closed cases | pass |
+| Restart recovery never blind-retries an in-flight send | `test/framework.test.js` outbox recovery cases | pass |
 | Framework enables no business Stopless | no enabled Stopless factory; `AGENTS.md` and docs | pass |
 | V3 Stopless resources removed | latest RouteCodex `origin/main` source scan and mapped gates | pass-source; runtime pending |
 

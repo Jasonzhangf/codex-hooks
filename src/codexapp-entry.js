@@ -13,7 +13,7 @@ const DEFAULT_TARGETS = join(homedir(), ".codex", "routecodex-hooks", "config", 
 const SERVICE = Object.freeze({ scopeId: "local:hooks", sessionId: "hooksd", kind: "service", live: true });
 const CAPABILITIES = Object.freeze({
   protocol: PROTOCOL,
-  query: ["capabilities", "status", "session_status", "message_status"],
+  query: ["capabilities", "status", "list_threads", "session_status", "message_status"],
   execution: ["register_target", "unregister_target", "send"],
   namespaces: ["codex_app", "codex_tui"],
   routeRules: ["service_to_registered_target"],
@@ -101,6 +101,7 @@ async function dispatch(request) {
     case "status": return status();
     case "register_target": return registerTarget(params);
     case "unregister_target": return unregisterTarget(params);
+    case "list_threads": return listThreads(params.address);
     case "session_status": return sessionStatus(params.address);
     case "send": return sendMessage(params.message || params);
     case "message_status": return messageStatus(params.messageId);
@@ -148,6 +149,28 @@ async function sessionStatus(address) {
     appserverId: target.appserver_id,
     namespace: target.namespace,
     status: normalizeThreadStatus(thread.status),
+  };
+}
+
+async function listThreads(address) {
+  if (!address || typeof address !== "object") throw codedError("address is required", "invalid_request");
+  const scopeId = required(address.scopeId || address.scope_id, "address.scopeId");
+  const target = targets.get(scopeId);
+  if (!target) throw codedError(`target scope not found: ${scopeId}`, "target_scope_not_found");
+  const loaded = await adapter(target).loadedThreads();
+  const threads = [];
+  for (const threadId of loaded) {
+    const thread = await adapter(target).threadStatus(threadId);
+    threads.push({
+      threadId,
+      status: normalizeThreadStatus(thread.status),
+    });
+  }
+  return {
+    scopeId: target.scope_id,
+    namespace: target.namespace,
+    appserverId: target.appserver_id,
+    threads,
   };
 }
 
@@ -313,22 +336,40 @@ class NativeAppServer {
 
   async thread(target, threadId) {
     await this.connect();
-    const result = await this.rpc.call("thread/read", { threadId });
-    const thread = result?.thread;
-    if (!thread || thread.id !== threadId) throw codedError(`thread/read identity mismatch for ${threadId}`, "native_transport_error");
-    let items;
+    const thread = await this.threadStatus(threadId);
+    let page;
     try {
-      const page = await this.rpc.call("thread/items/list", { threadId, limit: 100, sortDirection: "desc" });
-      items = normalizeItems(page);
+      page = await this.rpc.call("thread/items/list", { threadId, limit: 100, sortDirection: "desc" });
     } catch (itemsError) {
       try {
-        const page = await this.rpc.call("thread/turns/list", { threadId, limit: 100, sortDirection: "desc" });
-        items = normalizeItems(page);
+        page = await this.rpc.call("thread/turns/list", { threadId, limit: 100, sortDirection: "desc" });
       } catch (turnsError) {
         throw codedError(`thread history read is unsupported: items=${itemsError.message}; turns=${turnsError.message}`, "native_read_unsupported");
       }
     }
-    return { thread, status: thread.status, items, cursor: null };
+    return {
+      thread,
+      status: thread.status,
+      items: normalizeItems(page),
+      cursor: page?.backwardsCursor || page?.nextCursor || null,
+    };
+  }
+
+  async threadStatus(threadId) {
+    await this.connect();
+    const result = await this.rpc.call("thread/read", { threadId });
+    const thread = result?.thread;
+    if (!thread || thread.id !== threadId) throw codedError(`thread/read identity mismatch for ${threadId}`, "native_transport_error");
+    return thread;
+  }
+
+  async loadedThreads() {
+    await this.connect();
+    const result = await this.rpc.call("thread/loaded/list", {});
+    if (!Array.isArray(result?.data) || result.data.some((threadId) => typeof threadId !== "string" || threadId === "")) {
+      throw codedError("thread/loaded/list returned an invalid thread list", "native_transport_error");
+    }
+    return result.data;
   }
 
   async send(target, threadId, body, clientUserMessageId) {

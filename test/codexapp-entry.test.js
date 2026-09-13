@@ -108,6 +108,132 @@ test("internal codexapp preserves the first unsupported history read error", asy
   }
 });
 
+test("internal codexapp discovers loaded threads without calling thread/list", async () => {
+  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-discover-"));
+  const appserverSocket = join(root, "appserver.sock");
+  const controlSocket = join(root, "codexapp.sock");
+  const calls = [];
+  const native = await startNativeFixture(appserverSocket, calls);
+  const codexapp = spawn(process.execPath, [
+    "src/codexapp-entry.js",
+    "--socket", controlSocket,
+    "--targets-file", join(root, "targets.json"),
+  ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await readLine(codexapp.stdout);
+    await control(controlSocket, "register_target", {
+      scope_id: "local:test",
+      appserver_id: "test-appserver",
+      namespace: "codex_tui",
+      endpoint: `unix://${appserverSocket}`,
+    });
+    assert.deepEqual(await control(controlSocket, "list_threads", {
+      address: { scopeId: "local:test" },
+    }), {
+      scopeId: "local:test",
+      namespace: "codex_tui",
+      appserverId: "test-appserver",
+      threads: [{ threadId: "thread-1", status: { state: "idle", input_active: false } }],
+    });
+    assert.deepEqual(calls.filter(([method]) => method === "thread/list"), []);
+    assert.deepEqual(calls.find(([method]) => method === "thread/loaded/list"), ["thread/loaded/list", {}]);
+  } finally {
+    codexapp.kill("SIGTERM");
+    await once(codexapp, "exit");
+    await new Promise((resolve) => native.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("internal codexapp advances a message through receipt, reply, and read evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-evidence-"));
+  const appserverSocket = join(root, "appserver.sock");
+  const controlSocket = join(root, "codexapp.sock");
+  const calls = [];
+  const native = await startNativeFixture(appserverSocket, calls, {
+    queueResult: {
+      queuedSubmission: {
+        id: "queued-1",
+        clientUserMessageId: "message-1",
+      },
+    },
+    readPages: [
+      { data: [], nextCursor: null, backwardsCursor: "cursor-0" },
+      {
+        data: [{
+          turnId: "turn-1",
+          item: {
+            type: "userMessage",
+            id: "item-user-1",
+            clientId: "message-1",
+            content: [{ type: "text", text: "probe" }],
+          },
+        }],
+        nextCursor: null,
+        backwardsCursor: "cursor-1",
+      },
+      {
+        data: [{
+          turnId: "turn-1",
+          item: {
+            type: "agentMessage",
+            id: "item-agent-1",
+            text: "ACK-message-1",
+            phase: "final_answer",
+          },
+        }, {
+          turnId: "turn-1",
+          item: {
+            type: "userMessage",
+            id: "item-user-1",
+            clientId: "message-1",
+            content: [{ type: "text", text: "probe" }],
+          },
+        }],
+        nextCursor: null,
+        backwardsCursor: "cursor-2",
+      },
+    ],
+  });
+  const codexapp = spawn(process.execPath, [
+    "src/codexapp-entry.js",
+    "--socket", controlSocket,
+    "--targets-file", join(root, "targets.json"),
+  ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await readLine(codexapp.stdout);
+    await control(controlSocket, "register_target", {
+      scope_id: "local:test",
+      appserver_id: "test-appserver",
+      namespace: "codex_tui",
+      endpoint: `unix://${appserverSocket}`,
+    });
+    const sent = await control(controlSocket, "send", {
+      message: {
+        messageId: "message-1",
+        attemptId: "message-1",
+        from: { scopeId: "local:hooks", sessionId: "hooksd" },
+        to: { scopeId: "local:test", sessionId: "thread-1" },
+        body: "probe",
+      },
+    });
+    assert.equal(sent.state, "accepted");
+    const delivered = await control(controlSocket, "message_status", { messageId: "message-1" });
+    assert.equal(delivered.state, "delivered");
+    assert.equal(delivered.evidence.find((entry) => entry.state === "delivered").targetReceipt.clientId, "message-1");
+    const replied = await control(controlSocket, "message_status", { messageId: "message-1" });
+    assert.equal(replied.state, "read");
+    assert.equal(replied.evidence.find((entry) => entry.state === "executed").executionItemId, "item-agent-1");
+    assert.equal(replied.evidence.find((entry) => entry.state === "replied").responseTurnId, "turn-1");
+    assert.equal(replied.evidence.find((entry) => entry.state === "read").cursor, "cursor-2");
+  } finally {
+    codexapp.kill("SIGTERM");
+    await once(codexapp, "exit");
+    await new Promise((resolve) => native.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function control(socketPath, method, params = {}) {
   const response = await new Promise((resolve, reject) => {
     const socket = net.createConnection(socketPath);
@@ -131,7 +257,8 @@ async function control(socketPath, method, params = {}) {
   return response.result;
 }
 
-async function startNativeFixture(socketPath, calls, errors = {}) {
+async function startNativeFixture(socketPath, calls, options = {}) {
+  let readIndex = 0;
   const server = net.createServer((socket) => {
     let buffer = Buffer.alloc(0);
     let upgraded = false;
@@ -156,13 +283,14 @@ async function startNativeFixture(socketPath, calls, errors = {}) {
         let response;
         if (request.method === "initialize") response = { result: { userAgent: "fixture" } };
         else if (request.method === "thread/read") response = { result: { thread: { id: request.params.threadId, status: { type: "idle" }, turns: [] } } };
-        else if (request.method === "thread/items/list") response = errors.itemsError
-          ? { error: errors.itemsError }
+        else if (request.method === "thread/loaded/list") response = { result: { data: ["thread-1"], nextCursor: null } };
+        else if (request.method === "thread/items/list") response = options.itemsError
+          ? { error: options.itemsError }
+          : { result: options.readPages?.[Math.min(readIndex++, options.readPages.length - 1)] || { data: [], nextCursor: null, backwardsCursor: null } };
+        else if (request.method === "thread/turns/list") response = options.turnsError
+          ? { error: options.turnsError }
           : { result: { data: [], nextCursor: null } };
-        else if (request.method === "thread/turns/list") response = errors.turnsError
-          ? { error: errors.turnsError }
-          : { result: { data: [], nextCursor: null } };
-        else if (request.method === "thread/queue/add") response = { result: { accepted: true } };
+        else if (request.method === "thread/queue/add") response = { result: options.queueResult || { accepted: true } };
         else response = { error: { code: -32601, message: `unsupported ${request.method}` } };
         socket.write(encodeFrame(JSON.stringify({ id: request.id, ...response })));
       }

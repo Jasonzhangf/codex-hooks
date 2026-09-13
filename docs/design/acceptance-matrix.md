@@ -4,6 +4,10 @@ Status labels are evidence levels, not intent: `pass` means the listed
 artifact or test currently proves that row; `pending-live` means the contract
 exists but the required real endpoint evidence is not present.
 
+`pass-adapter` means the internal bin was exercised against a real isolated
+native App Server through the control socket (accepted/receipt/execution/reply/
+read). It is not the same-entry hook-to-ACK trace, which stays `pending-live`.
+
 | Requirement | Authoritative evidence | Status |
 | --- | --- | --- |
 | Skills teach install/config/status | `skills/routecodex-hooks/SKILL.md`, `skills/scheduling/SKILL.md` | pass |
@@ -18,6 +22,9 @@ exists but the required real endpoint evidence is not present.
 | Deterministic timer skeleton | `src/timer.js`, tests 70–76 | pass |
 | Cordis plugin lifecycle | `src/orchestrator.js`, `test/orchestrator.test.js` | pass |
 | CodexApp typed port | `src/codexapp-port.js`, bridge contract tests | pass |
+| Internal `rccv3-codexapp` bin | `src/codexapp-entry.js`, `test/codexapp-entry.test.js`, `test/init.test.js` | pass |
+| Managed supervisor uses installed bin | `src/install.js`, `src/supervisor-entry.js`, `test/supervisor-entry.test.js` | pass |
+| Native TUI send/receipt/execution/reply/read via internal bin | isolated TUI App Server trace, 2026-09-13 (`codexapp-e2e-1789301536`) | pass-adapter |
 | RouteCodex managed startup | RouteCodex lifecycle owner and installed replay | pending-live |
 | Real TUI send/status/reply/ACK | running native TUI endpoint and same-entry trace | pending-live |
 | Real Desktop send/status/reply/ACK | running native Desktop App Server endpoint and same-entry trace | pending-live |

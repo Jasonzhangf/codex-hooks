@@ -5,17 +5,19 @@
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "node --check src/protocol.js && node --check src/daemon.js && node --check src/server.js && node --check src/hook-entry.js && node --check src/orchestrator.js && node --check src/supervisor.js && node --check src/supervisor-entry.js && node --check src/persistence.js && node --check src/control.js && node --check src/mcp.js && node --check src/mcp-server.js && node --check src/install.js && node --check src/cli.js && node --check src/daemon-entry.js && node --check src/codexapp-port.js && node --check src/timer.js && node --check src/decision.js && node --check src/config.js && node --check src/endpoint.js && node --check scripts/init.mjs",
+    "check": "node --check src/protocol.js && node --check src/daemon.js && node --check src/server.js && node --check src/hook-entry.js && node --check src/orchestrator.js && node --check src/supervisor.js && node --check src/supervisor-entry.js && node --check src/persistence.js && node --check src/control.js && node --check src/mcp.js && node --check src/mcp-server.js && node --check src/install.js && node --check src/cli.js && node --check src/daemon-entry.js && node --check src/codexapp-port.js && node --check src/codexapp-entry.js && node --check src/timer.js && node --check src/decision.js && node --check src/config.js && node --check src/endpoint.js && node --check scripts/init.mjs",
     "cli": "node src/cli.js",
     "daemon": "node src/daemon-entry.js",
     "init": "node scripts/init.mjs",
-    "mcp": "node src/mcp-server.js"
+    "mcp": "node src/mcp-server.js",
+    "codexapp": "node src/codexapp-entry.js"
   },
   "bin": {
     "routecodex-hooks": "src/cli.js",
     "routecodex-hooks-mcp": "src/mcp-server.js",
     "routecodex-hooksd": "src/daemon-entry.js",
-    "routecodex-hooks-supervisor": "src/supervisor-entry.js"
+    "routecodex-hooks-supervisor": "src/supervisor-entry.js",
+    "rccv3-codexapp": "src/codexapp-entry.js"
   },
   "dependencies": {
     "cordis": "4.0.0-rc.10"

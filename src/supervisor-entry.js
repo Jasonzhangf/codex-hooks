@@ -45,7 +45,7 @@ process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 
 async function startCodexapp(currentConfig) {
-  const internalCommand = process.env.ROUTECODEX_V3_CODEXAPP_BINARY;
+  const internalCommand = process.env.ROUTECODEX_V3_CODEXAPP_BINARY || currentConfig.supervisor.codexapp.command;
   if (!internalCommand) throw new Error("RouteCodex internal codexapp executable is required");
   if (!isAbsolute(internalCommand) || basename(internalCommand) !== "rccv3-codexapp") {
     throw new Error(`RouteCodex internal codexapp executable is invalid: ${internalCommand}`);

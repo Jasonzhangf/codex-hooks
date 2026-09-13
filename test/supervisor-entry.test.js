@@ -20,7 +20,7 @@ const codexappSource = [
   "process.once('SIGTERM',()=>server.close(()=>process.exit(0)));",
 ].join("");
 
-test("installed supervisor starts codexapp before hooksd and exits cleanly in reverse order", async () => {
+test("installed supervisor starts codexapp from configured command without env override and exits cleanly", async () => {
   const root = await mkdtemp(join(tmpdir(), "routecodex-hooks-supervisor-"));
   const socket = join(root, "codexapp.sock");
   const internalBinary = join(root, "rccv3-codexapp");
@@ -39,11 +39,11 @@ test("installed supervisor starts codexapp before hooksd and exits cleanly in re
     supervisor: {
       enabled: true,
       startup_timeout_ms: 5000,
-      codexapp: { command: process.execPath, args: ["-e", codexappSource, socket] },
+      codexapp: { command: internalBinary, args: ["-e", codexappSource, socket] },
       hooksd: { command: process.execPath, args: ["-e", idleChild] },
     },
   }) + "\n");
-  const child = spawn(process.execPath, ["src/supervisor-entry.js", "--config", configPath], { env: { ...process.env, ROUTECODEX_V3_CODEXAPP_BINARY: internalBinary }, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, ["src/supervisor-entry.js", "--config", configPath], { env: { ...process.env, ROUTECODEX_V3_CODEXAPP_BINARY: "" }, stdio: ["ignore", "pipe", "pipe"] });
   try {
     const ready = JSON.parse(await readLine(child.stdout));
     assert.deepEqual(ready, { protocol: "routecodex-hooks-supervisor/v1", ready: true, state: "ready" });

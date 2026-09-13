@@ -27,6 +27,7 @@ export function installPaths({ codexHome = join(homedir(), ".codex"), binDir = j
     mcpWrapper: join(resolve(binDir), "routecodex-hooks-mcp"),
     daemonWrapper: join(resolve(binDir), "routecodex-hooksd"),
     supervisorWrapper: join(resolve(binDir), "routecodex-hooks-supervisor"),
+    codexappWrapper: join(resolve(binDir), "rccv3-codexapp"),
   };
 }
 
@@ -63,6 +64,7 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
   writeExecutable(paths.mcpWrapper, wrapperSource(paths.sourceDirectory, "mcp-server.js", paths.installRecord));
   writeExecutable(paths.daemonWrapper, wrapperSource(paths.sourceDirectory, "daemon-entry.js", paths.installRecord));
   writeExecutable(paths.supervisorWrapper, wrapperSource(paths.sourceDirectory, "supervisor-entry.js", paths.installRecord));
+  writeExecutable(paths.codexappWrapper, wrapperSource(paths.sourceDirectory, "codexapp-entry.js", paths.installRecord));
 
   const hookConfig = readJsonIfExists(paths.hooksFile) || {};
   removeManagedHooks(hookConfig, [...managedCommands, hookCommand]);
@@ -88,6 +90,7 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
     mcp_wrapper: paths.mcpWrapper,
     daemon_wrapper: paths.daemonWrapper,
     supervisor_wrapper: paths.supervisorWrapper,
+    codexapp_wrapper: paths.codexappWrapper,
     supervisor_enabled: daemonConfig.supervisor.enabled,
     initialized_at: new Date().toISOString(),
   };
@@ -128,7 +131,7 @@ function buildDaemonConfig({ paths, endpoint, previous, supervisorEnabled }) {
     enabled: supervisorEnabled ?? oldSupervisor.enabled ?? false,
     startup_timeout_ms: oldSupervisor.startup_timeout_ms || 10000,
     codexapp: {
-      command: "rccv3-codexapp",
+      command: paths.codexappWrapper,
       args: ["--socket", codexappSocket, "--targets-file", codexappTargets],
     },
     hooksd: {

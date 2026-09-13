@@ -27,6 +27,7 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
     assert.equal(fs.statSync(first.mcp_wrapper).mode & 0o111, 0o111);
     assert.equal(fs.statSync(first.daemon_wrapper).mode & 0o111, 0o111);
     assert.equal(fs.statSync(first.supervisor_wrapper).mode & 0o111, 0o111);
+    assert.equal(fs.statSync(first.codexapp_wrapper).mode & 0o111, 0o111);
     assert.equal(
       await readFile(join(first.skills_directory, "routecodex-hooks", "SKILL.md"), "utf8"),
       await readFile(join(process.cwd(), "skills", "routecodex-hooks", "SKILL.md"), "utf8"),
@@ -34,7 +35,7 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
     assert.equal((await readFile(first.cli_wrapper, "utf8")).includes(first.source_directory), true);
     const daemonConfig = loadDaemonConfig(first.daemon_config);
     assert.equal(daemonConfig.supervisor.enabled, false);
-    assert.equal(daemonConfig.supervisor.codexapp.command, "rccv3-codexapp");
+    assert.equal(daemonConfig.supervisor.codexapp.command, first.codexapp_wrapper);
     assert.deepEqual(daemonConfig.supervisor.codexapp.args, ["--socket", daemonConfig.codexapp.socket, "--targets-file", first.codexapp_targets]);
     assert.equal(daemonConfig.codexapp.source_kind, "service");
 

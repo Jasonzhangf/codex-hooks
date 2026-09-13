@@ -1,25 +1,47 @@
 # Acceptance Matrix
 
-| Capability | Framework evidence | Runtime ceiling |
-| --- | --- | --- |
-| Official event normalization | `protocol.js`, schema, manifest test | No production trust approval claim |
-| Stop recursion guard | `stop_hook_active` regression | No real Codex Stop replay yet |
-| Status-aware sending | daemon tests for idle/working/stopping/unknown/disconnected | Mock CodexApp only |
-| Deferred delivery | daemon pending/flush tests | In-memory store unless JsonStateStore is selected |
-| Idempotency | concurrent event/intent tests | No distributed multi-daemon claim |
-| Cordis lifecycle | orchestrator tests | No RouteCodex managed startup claim |
-| Persistence port | `JsonStateStore` restart test | No crash-injection production replay |
-| JSON daemon entry | `daemon-entry.test.js`, `/health` probe | Requires a real supplied CodexApp module |
-| MCP read boundary | `McpStateClient` same-daemon query test | No published MCP server process |
-| CLI mutation boundary | control mutation HTTP contract | Timer tick remains an operator skeleton |
-| Deterministic timer gate | `ManualClock` + `TimerOperator` tests | No recurring/product scheduling policy |
-| Delivery evidence progression | exact daemon reconciler + state contract | Native TUI/Desktop evidence still pending |
-| Unknown-delivery reconciliation | matching attempt + target receipt only | Native message-status replay pending |
-| CodexApp bridge adapter | Unix control `capabilities`/`session_status`/`send` mapping test | Registered real source/target scopes pending |
-| Complete edge graph | [`edge-coverage.md`](edge-coverage.md) + machine contract | Rows marked pending require managed runtime replay |
-| TUI/Desktop transport | RouteCodex-internal `rccv3-codexapp` is the adapter owner | Requires same-entry native replay |
-| Stopless/timer/memory behavior | extension contracts only | Explicitly out of scope |
-| V3 Stopless retirement | RouteCodex candidate and removal gates | Main merge and full V3 gate still separate |
+Status labels are evidence levels, not intent: `pass` means the listed
+artifact or test currently proves that row; `pending-live` means the contract
+exists but the required real endpoint evidence is not present.
 
-Evidence must not be promoted from one row to another. In particular, a mock
-CodexApp receipt is not proof of native Desktop/TUI delivery.
+| Requirement | Authoritative evidence | Status |
+| --- | --- | --- |
+| Skills teach install/config/status | `skills/routecodex-hooks/SKILL.md`, `skills/scheduling/SKILL.md` | pass |
+| MCP is query-only | `src/mcp-server.js`, `test/mcp.test.js`, CLI/MCP boundary tests | pass |
+| CLI owns mutations | `src/cli.js`, `src/control.js`, `test/control.test.js` | pass |
+| Official event adapters | `hooks/hooks.json`, `contracts/hook-event.schema.json`, manifest test | pass |
+| Stop `stop_hook_active` guard | `src/protocol.js`, daemon tests | pass |
+| Stop allow/block/external-inject contract | `test/decision.test.js`, `test/framework.test.js` | pass |
+| Tool observe/allow/deny/delay contract | `test/decision.test.js`, hook-kind tests | pass |
+| Daemon state/persistence/idempotency | `src/daemon.js`, `src/persistence.js`, tests 39–45/50–52 | pass |
+| Working suppress/send matrix | `contracts/state-machine.json`, tests 34–38 | pass |
+| Deterministic timer skeleton | `src/timer.js`, tests 70–76 | pass |
+| Cordis plugin lifecycle | `src/orchestrator.js`, `test/orchestrator.test.js` | pass |
+| CodexApp typed port | `src/codexapp-port.js`, bridge contract tests | pass |
+| RouteCodex managed startup | RouteCodex lifecycle owner and installed replay | pending-live |
+| Real TUI send/status/reply/ACK | running native TUI endpoint and same-entry trace | pending-live |
+| Real Desktop send/status/reply/ACK | running native Desktop App Server endpoint and same-entry trace | pending-live |
+| Framework enables no business Stopless | no enabled Stopless factory; `AGENTS.md` and docs | pass |
+| V3 Stopless resources removed | latest RouteCodex `origin/main` source scan and mapped gates | pass-source; runtime pending |
+
+## Required real trace
+
+For each namespace, the evidence record must retain the same `message_id`,
+`attempt_id`, target identity, and native cursor through:
+
+```text
+hook stdin
+ -> daemon decision
+ -> get_running_state
+ -> send_message
+ -> native acceptance
+ -> target receipt/execution
+ -> reply turn
+ -> read with changed cursor
+ -> ACK when required
+```
+
+The trace must be run once with `idle_only` while working (zero native send),
+once while idle (one send), and once with explicit `working_allowed` (one send).
+A failed send, timeout, disconnect, duplicate event, and daemon restart must
+remain visible as their respective failure/recovery states.

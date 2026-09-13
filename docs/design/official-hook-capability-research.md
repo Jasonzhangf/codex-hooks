@@ -1,39 +1,58 @@
-# Official Codex Hook Capability Research
+# Official Codex Hooks Capability Research
 
-Source: [OpenAI ChatGPT Learn — Hooks](https://learn.chatgpt.com/docs/hooks)
+Source: [OpenAI Codex Hooks documentation](https://learn.chatgpt.com/docs/hooks)
+and its release Markdown representation at
+`https://learn.chatgpt.com/docs/hooks.md`, retrieved 2026-09-13.
+The page states that the generated `main`-branch schemas may contain fields
+not in the current release; this document treats the page's release behavior
+as authoritative.
 
-Retrieved: 2026-09-11
+## Supported lifecycle events
 
-## Confirmed lifecycle surface
+The official page lists `SessionStart`, `SubagentStart`, `UserPromptSubmit`,
+`PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`,
+`SubagentStop`, `Stop`, `Interrupt`, and `SessionEnd`.
 
-The official page documents these events:
+There is no event literally named `Input`. Input/context injection is exposed
+through `SessionStart` and `UserPromptSubmit` output (`additionalContext`),
+while `PreToolUse`/`PostToolUse`/`PermissionRequest` are the tool-call boundary.
 
-```text
-SessionStart
-SubagentStart
-UserPromptSubmit
-PreToolUse
-PermissionRequest
-PostToolUse
-PreCompact
-PostCompact
-SubagentStop
-Stop
-Interrupt
-SessionEnd
+## Command hook transport
+
+- One JSON object is delivered on command-hook stdin.
+- Commands run with the session `cwd`.
+- JSON or supported plain text is read from stdout according to the event.
+- stderr is the error/blocking-reason channel where the event supports exit 2.
+- exit 0 with no output is success and Codex continues.
+- command timeout is in seconds; the documented default is 600 seconds for
+  most hooks, with one-second default and a three-second maximum for
+  `Interrupt`/`SessionEnd` rules as documented.
+- `async:true` runs a background command; background hooks cannot block,
+  approve, rewrite, or control the triggering operation.
+- hooks are invoked concurrently when multiple matching command handlers match
+  the same event; one hook cannot prevent another from starting.
+
+## Context injection
+
+`SessionStart` and `UserPromptSubmit` support:
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": "..."
+  }
+}
 ```
 
-Command hooks receive JSON on stdin. Matching hooks from multiple sources all
-run; matching command hooks for one event can run concurrently. Hook commands
-run with the session cwd. A hook definition may specify `timeout`,
-`statusMessage`, `async`, and `additionalContextLimit`. The page documents
-command and `mcp_tool` handlers; prompt and agent handlers are parsed but
-skipped.
+This is official model-visible context. It is not a general arbitrary prompt
+send API and is not available as a blanket guarantee for `Stop`.
 
-## Stop semantics
+## Stop
 
-`Stop` receives `turn_id`, `stop_hook_active`, and
-`last_assistant_message`. It expects JSON on stdout. Returning:
+`Stop` has `turn_id`, `stop_hook_active`, and
+`last_assistant_message`. Its matcher is ignored. With exit 0 it expects JSON.
+The documented continuation shape is:
 
 ```json
 {
@@ -42,59 +61,36 @@ skipped.
 }
 ```
 
-tells Codex to continue and creates a new continuation prompt using `reason`.
-`stop_hook_active` identifies a turn already continued by Stop and is the
-official recursion guard. This is the official native continuation path.
+`decision:"block"` does not reject the finished turn: Codex creates a new
+continuation prompt using `reason`. If any matching Stop hook returns
+`continue:false`, that takes precedence over continuation decisions. This is
+an official native continuation mechanism, distinct from an external
+`codexapp.sendmessage` wake. The framework never treats `continue:false` as
+proof that an external send was delivered and never combines external send
+with native `decision:"block"`.
 
-The common output field `continue: false` means that the current Hook run is
-stopped. It is not a receipt for a message sent through another transport, and
-it can affect how other Stop hook decisions are handled. The framework does
-not use it to acknowledge external injection.
+`stop_hook_active:true` means the turn was already continued by Stop and is the
+mandatory loop guard for any future Stop policy.
 
-The framework keeps a separate external-wake path:
+## Tool-call hooks
 
-```text
-Stop hook -> hooksd policy -> codexapp.sendmessage (when a wake is needed)
-                         -> ordinary successful Stop output
-```
+`PreToolUse` can observe, block, or rewrite supported tool input using
+`permissionDecision` and `updatedInput`. `PostToolUse` can observe feedback or
+block/replace the model-visible result, but cannot undo completed side effects.
+`PermissionRequest` can allow, deny, or decline. Tool matchers include Bash,
+`apply_patch` aliases, MCP tool names, and most local function tools. Hosted
+tools such as WebSearch are outside this local hook path. Some specialized
+tools can opt out, so this is not a complete enforcement boundary.
 
-The external path does not emit `decision: "block"`; that would ask Codex to
-create a second continuation in addition to the queued message. It also does
-not emit `continue: false` as an injection acknowledgment. The official page
-does not establish that `continue: false` means “the separately sent message
-was injected and will execute”. The adapter therefore returns the ordinary
-successful/no-op Hook output until an installed same-entry TUI/Desktop replay
-proves a more specific projection. Native Stop continuation and external
-`sendmessage` are mutually exclusive policy choices.
+MCP tool hooks use an already-connected MCP server; they do not start or
+reconnect one. Missing servers/tools and MCP errors do not block the operation.
 
-## Input and tool semantics
+## Adapter consequences
 
-`UserPromptSubmit` receives `prompt` and can return
-`hookSpecificOutput.additionalContext`, which Codex adds as developer context.
-`SessionStart` can also return `additionalContext`. This is the official input
-injection projection; it is not a hidden metadata or response-payload carrier.
-
-`PreToolUse` can deny a supported tool call or return `updatedInput` with an
-allow decision. `PostToolUse` cannot undo a completed side effect; it can
-provide feedback, and a blocking result changes the model-visible result.
-`PermissionRequest` can allow, deny, or decline to decide. The framework keeps
-these as adapter events and does not duplicate RouteCodex's existing tool
-governance owner.
-
-## Plugin and trust semantics
-
-Codex discovers plugin-bundled hooks from the default
-`hooks/hooks.json` path. A plugin may declare a custom hook path in its
-manifest, but this repository uses the default path so the local plugin
-validator and official discovery path agree. Non-managed hooks require review
-and trust of the exact hook definition hash before running.
-
-## Not established by official Hooks
-
-The official page does not make the hook itself the owner of durable timer
-state, Codex running-state observation, cross-process persistence, or native
-TUI/Desktop message transport. Those remain `hooksd` and `codexapp` concerns.
-The framework does not infer those capabilities from hook stdin, transcripts,
-logs, or queue acceptance. In particular, a successful external send and an
-empty/no-op Stop output are only adapter-level evidence; they are not proof of
-delivery, execution, reply, or read.
+The official contract guarantees lifecycle event delivery and event-specific
+stdout decisions. It does not guarantee a direct sendmessage primitive, native
+TUI/Desktop target discovery, cross-process retry, or a reply/ACK. Those belong
+to the typed CodexApp adapter and daemon evidence ledger. The adapter therefore
+validates stdin, sends one daemon RPC, and projects only the official result;
+native transport identities and policy state never go into hook stdout or the
+business payload.

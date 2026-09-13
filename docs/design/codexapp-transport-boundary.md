@@ -1,44 +1,69 @@
 # CodexApp Transport Boundary
 
-`codexapp` is an independent component built into RouteCodex V3. It owns namespace routing for
-`codex_tui` and `codex_app`, native App Server capability checks, running-state
-observation, `sendmessage`, and native transport error mapping.
+CodexApp is an independent internal component. The daemon depends on a typed
+port, not on TUI or Desktop protocol details.
 
-The RouteCodex-internal `rccv3-codexapp` exposes a `codex-comm/v1` Unix control
-bridge. Its control methods are `session_status` and `send`; the hooks-facing
-typed port advertises `session_status` and `send_message_to_thread`. The
-mapping is explicit and local to `CodexAppBridgePort`. `target_scopes` maps
-`<namespace>/<appserver_id>` to a registered bridge scope, and the configured
-source address must already be a registered bridge agent.
-
-The hooks daemon owns neither App Server protocol details nor Codex input
-transport. Its only dependency is a typed port equivalent to:
+## Typed port
 
 ```text
-capabilities(target) -> capability evidence
-session_status(target) -> { state: idle|working|stopping|disconnected|unknown, input_active: boolean }
-sendmessage(request) -> accepted or explicit failure
-delivery_evidence(intent_id, after_state) -> one exact native transition or explicit unavailable
+capabilities() -> CapabilitySet
+get_running_state(Target) -> RunningState
+send_message(SendMessageRequest) -> SendMessageResult
+observe_delivery(MessageId) -> DeliveryEvidence
+read_thread(Target, Cursor) -> ThreadPage
 ```
 
-`input_active` is an orthogonal observation: the daemon defers automatic
-messages while the user is typing, including messages explicitly marked
-`working_allowed`. An App Server queue acceptance is only an acceptance receipt.
-Delivery, execution, reply, read, and consumption require their own native evidence;
-each receipt must carry the original `attempt_id`; read evidence also carries a
-cursor and consumption evidence carries an independent `ack_id`. The daemon accepts
-them only through the exact progression and never infers them. A timeout has uncertain
-delivery and is not blindly retried. TUI and Desktop
-adapters may differ internally, but those differences must not enter daemon
-policy state.
+`Target` carries `namespace`, `appserver_id`, `scope_id`, `session_id`, and
+`thread_id`. A `SendMessageRequest` carries `message_id`, `event_id`,
+`attempt_id`, `operator_id`, `priority`, `working_policy`, `dedupe_key`,
+`payload`, `created_at`, and `expires_at`. These are control fields around a
+separate message body; the body cannot override them.
 
-The current bridge adapter implements `delivery_evidence` for the
-`accepted/unknown_delivery → delivered` transition through `message_status`.
-Later execution/reply/read/ACK transitions remain an explicit typed extension
-point; the daemon refuses to synthesize them when the adapter does not expose
-the corresponding native evidence.
+`RunningState` is one of `unknown`, `starting`, `working`, `idle`,
+`waiting_for_input`, `stopping`, `stopped`, `disconnected`, or `failed`, plus
+the orthogonal `input_active` observation. `SendMessageResult` distinguishes
+`accepted`, `delivered`, `failed`, and `unknown` rather than returning a
+boolean.
 
-The bridge adapter preserves the target `thread_id` as the native thread
-address and carries the original `attempt_id` into the bridge message id and
-attempt id. A bridge response is still only accepted/sent evidence; later
-delivery, reply, read, and ACK evidence remains owned by the daemon ledger.
+## Local CodexApp evidence
+
+The reference project is `/Users/fanzhang/github/codexapp`. Its bridge exposes
+the real local contract `codex-comm/v1`:
+
+- namespaces: `codex_tui` and `codex_app`;
+- query methods: discovery, session listing/status, message status,
+  capabilities, and bridge status;
+- execution methods: register, send, wait, reply, and ACK;
+- native App Server adapter: Unix WebSocket JSON-RPC;
+- shared bridge: Unix JSON-lines control socket with a durable journal.
+
+The bridge README explicitly says MCP is query-only; CLI owns registration and
+execution. `send` is routed through the bridge and `session_status` is
+observed from the App Server. Its six automated tests pass, including
+bidirectional routing and reply correlation.
+
+## Adapter isolation
+
+The TUI and Desktop adapters may differ in endpoint and native method details.
+They map into the same typed port and keep namespace/appserver/session/thread
+identities in control state. The daemon never imports either native adapter or
+infers a namespace from a flattened string.
+
+## Evidence ceiling
+
+The local bridge tests prove the adapter contract and mock/native transport
+shape. They do not prove that a currently running real TUI and Desktop session
+has accepted a message. The required live sequence remains:
+
+```text
+send call emitted
+  -> native acceptance
+  -> target receipt
+  -> target execution
+  -> reply turn
+  -> read with changed cursor
+  -> consumer ACK (when required)
+```
+
+The framework must report the first missing boundary and must never promote a
+queue acceptance, log line, screenshot, or process listing to delivery.

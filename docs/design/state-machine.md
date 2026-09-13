@@ -1,38 +1,121 @@
-# State Machine Design Entry Point
+# Hooks Framework State Machine
 
-The machine-readable state owner is [`../../contracts/state-machine.json`](../../contracts/state-machine.json).
-The complete edge graph and evidence ceiling are in
-[`../framework-graph.md`](../framework-graph.md).
-The requirement-by-requirement edge ledger is
-[`edge-coverage.md`](edge-coverage.md); it distinguishes deterministic probes
-from real native runtime evidence.
+The machine-readable source is [`contracts/state-machine.json`](../../contracts/state-machine.json).
+The graph in [`../framework-graph.md`](../framework-graph.md) is the human
+review surface. This document records the complete state dimensions and the
+failure/recovery edges that the contract tests exercise.
 
-The state model has independent concerns, all represented in the machine
-readable contract:
+## Runtime
 
-1. Runtime lifecycle: `down → starting_codexapp → codexapp_ready →
-   starting_hooksd → ready`, with explicit `draining` and `failed` exits.
-2. Codex observation: `idle`, `working`, `stopping`, `disconnected`, and
-   `unknown`.
-3. Hook processing: validation, classification, idempotency, decision, timeout,
-   duplicate, and failure.
-4. Message delivery: suppression/queueing, deferred, emitted/sending, accepted,
-   uncertain delivery, terminal failure/expiry, and later native evidence
-   through `delivered → executed → replied → read → consumed`.
-   Accepted is never promoted to delivered without a matching CodexApp receipt.
-5. Schedule and operator lifecycle: configured/due/claimed schedule occurrences
-   and independent inactive/armed/triggered/deferred/eligible operator states.
+```text
+down -> starting_codexapp -> codexapp_ready -> starting_hooksd -> ready
+  |          capability error                 | startup error
+  +------------------------------------------> failed
+ready -> degraded -> ready
+ready -> draining -> stopping -> stopped
+stopping -> crashed -> restarting -> codexapp_ready
+restarting -> failed
+ready -> failed (fatal error)
+```
 
-Runtime lifecycle also models degraded service, orderly stopping/stopped,
-crash, and restart. Hook action projection models observe/allow/deny/delay/
-inject separately from the generic acknowledged result. Message contracts
-include accepted/sent, later native evidence, retryable, deduplicated, and
-unknown-delivery reconciliation states. `sent` and `acknowledged` are valid
-receipt vocabulary for adapters, while the foundation's live outbox uses
-`accepted` and `consumed` as its durable states. These are contract states;
-the foundation does not enable a business operator.
+`degraded` means the parent can remain alive while the optional hooks sidecar
+is unavailable; it never means hooksd is ready.
 
-The default gate is `idle_only`: a working session is deferred and never calls
-`sendmessage`. `working_allowed` is an explicit operator decision. Unknown,
-disconnected, failed, and unknown states fail closed; starting and stopping
-defer according to the typed contract; they are never guessed as idle.
+## Codex session dimension
+
+The observed states are `unknown`, `starting`, `working`, `idle`,
+`waiting_for_input`, `stopping`, `stopped`, `disconnected`, and `failed`.
+The orthogonal `input_active` flag suppresses automatic sending. The complete
+gate is:
+
+| Session state | idle_only | working_allowed |
+| --- | --- | --- |
+| idle | send | send |
+| working | defer | send |
+| waiting_for_input | send | send |
+| stopping | defer | defer |
+| stopped | send | send |
+| starting | defer | defer |
+| unknown | fail closed | fail closed |
+| disconnected | fail closed | fail closed |
+| failed | fail closed | fail closed |
+
+Each `defer` persists a pending intent. A later legal idle observation flushes
+it once; a status error remains visible and does not become a send.
+
+## Hook dimension
+
+```text
+received -> validated -> normalized -> dispatched -> waiting -> decided
+                                                   |       |
+                                                   |       +-> timed_out
+                                                   +-> duplicate / stale
+decided -> projected -> observe | allow | deny | delay | inject | acknowledged
+decided -> failed (projection error)
+received -> failed (malformed input)
+```
+
+Duplicate events return their recorded result. Delayed/expired events do not
+create a new intent. `Stop`, `SubagentStop`, `SessionStart`, `UserPromptSubmit`,
+`PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`,
+`Interrupt`, and `SessionEnd` each have an adapter manifest entry; observe-only
+events still pass validation and idempotency.
+
+## Message dimension
+
+```text
+created -> suppressed | queued | deferred | emitted
+emitted -> sending -> accepted -> sent -> delivered -> executed -> replied
+                                            -> read -> consumed/acknowledged
+sending -> failed | unknown_delivery
+unknown_delivery -> delivered only after matching native evidence
+retryable -> emitted only with a new attempt identity
+created -> deduplicated | expired | cancelled
+```
+
+No log, MCP read, or queue insertion advances a message past the evidence it
+actually proves. A send timeout, disconnect during send, ACK loss, duplicate
+ACK, unchanged read cursor, and reply timeout remain explicit unresolved or
+failed states.
+
+## Schedule and operator dimensions
+
+The future timer contract is:
+
+```text
+absent -> configured -> enabled -> due -> claimed
+claimed -> send_pending -> sent -> completed
+claimed -> deferred_while_working -> send_pending
+claimed -> failed | expired | session_missing
+enabled -> disabled
+configured/disabled -> cancelled
+failed -> retryable -> send_pending (new attempt)
+```
+
+Operators are namespaced and independent:
+
+```text
+inactive -> armed -> triggered -> eligible -> completed
+                         |           |
+                         +-> deferred +-> failed
+deferred -> eligible
+triggered -> failed
+```
+
+The graph explicitly covers: startup against working or idle Codex; unknown
+state; Stop allow/block/external-inject decisions; idle-to-working races;
+send timeout/failure/disconnect; duplicate/stale hooks; daemon restart and
+crash recovery; concurrent operators; Stopless/update-goal simultaneous
+events; manual input; disabled operators; corrupted config; persistence
+failure; timer expiry during working or with a missing session; versioned state
+rehydration; lost or repeated ACK; Stop timeout; and tool-call observe/allow/
+deny/delay outcomes.
+
+## Recovery invariants
+
+1. Reserve event and intent before awaiting status or transport.
+2. Never retry an uncertain native send without matching receipt evidence.
+3. Persist pending and unknown states before reporting them.
+4. Never synthesize an official event for a daemon timer.
+5. Never let Stopless state, update-goal state, timer state, or Memory state
+   leak across operator namespaces.

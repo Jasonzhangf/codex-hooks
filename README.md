@@ -8,9 +8,22 @@ It is also a valid Codex plugin. The manifest is
 [`.codex-plugin/plugin.json`](.codex-plugin/plugin.json), and the official
 hook adapters are loaded from [`hooks/hooks.json`](hooks/hooks.json).
 
-The design baseline is [docs/design.md](docs/design.md). Resource contracts,
-state machines, ownership, and verification gates are under `contracts/` and
-`docs/verification-plan.md`.
+The design baseline is [docs/design.md](docs/design.md). The detailed design
+set is:
+
+- [hooks-framework.md](docs/design/hooks-framework.md): layers and boundaries;
+- [state-machine.md](docs/design/state-machine.md): complete lifecycle graph;
+- [plugin-and-operator-model.md](docs/design/plugin-and-operator-model.md):
+  Cordis and operator isolation;
+- [codexapp-transport-boundary.md](docs/design/codexapp-transport-boundary.md):
+  typed TUI/Desktop transport boundary;
+- [official-hook-capability-research.md](docs/design/official-hook-capability-research.md):
+  official capability findings;
+- [acceptance-matrix.md](docs/design/acceptance-matrix.md): evidence-level
+  acceptance matrix.
+
+Resource contracts, state machines, ownership, and verification gates are
+under `contracts/` and `docs/verification-plan.md`.
 
 The runtime split is fixed:
 

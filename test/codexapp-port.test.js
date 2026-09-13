@@ -74,6 +74,79 @@ test("CodexApp bridge port maps official capabilities and preserves target/attem
   }
 });
 
+test("CodexApp bridge port returns native execution/reply/read evidence for daemon reconciliation", async () => {
+  const socketPath = join(tmpdir(), `codex-hooks-port-evidence-${process.pid}.sock`);
+  const server = net.createServer((socket) => {
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      const index = buffer.indexOf("\n");
+      if (index < 0) return;
+      const request = JSON.parse(buffer.slice(0, index));
+      const result = request.method === "message_status" ? {
+        messageId: request.params.messageId,
+        attemptId: request.params.messageId,
+        from: { scopeId: "hooks", sessionId: "hooksd" },
+        to: { scopeId: "local:tui", sessionId: "thread-1" },
+        routing: { requestedTo: { scopeId: "local:tui", sessionId: "thread-1" }, routedTo: { scopeId: "local:tui", sessionId: "thread-1" } },
+        evidence: [
+          { state: "delivered", targetReceipt: { clientId: request.params.messageId } },
+          { state: "executed", executionItemId: "item-agent-1" },
+          { state: "replied", responseTurnId: "turn-1", responseItemId: "item-agent-1" },
+          { state: "read", cursor: "cursor-1", readItemId: "item-agent-1" },
+        ],
+      } : { state: "accepted" };
+      socket.end(`${JSON.stringify({ id: request.id, result })}\n`);
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  try {
+    const port = new CodexAppBridgePort({
+      socket: socketPath,
+      source: { scopeId: "hooks", sessionId: "hooksd" },
+      target_scopes: { "codex_tui/tui-appserver": "local:tui" },
+    });
+    const target = { namespace: "codex_tui", appserver_id: "tui-appserver", session_id: "hook-session", thread_id: "thread-1" };
+    assert.deepEqual(await port.delivery_evidence({ target, attempt_id: "attempt-1", after_state: "accepted" }), {
+      attempt_id: "attempt-1",
+      target_receipt: { clientId: "attempt-1" },
+      source: "codexapp.message_status",
+      target: { scopeId: "local:tui", sessionId: "thread-1" },
+    });
+    assert.deepEqual(await port.delivery_evidence({ target, attempt_id: "attempt-1", after_state: "delivered" }), {
+      attempt_id: "attempt-1",
+      execution_item_id: "item-agent-1",
+      source: "codexapp.message_status",
+      target: { scopeId: "local:tui", sessionId: "thread-1" },
+    });
+    assert.deepEqual(await port.delivery_evidence({ target, attempt_id: "attempt-1", after_state: "executed" }), {
+      attempt_id: "attempt-1",
+      response_turn_id: "turn-1",
+      response_item_id: "item-agent-1",
+      source: "codexapp.message_status",
+      target: { scopeId: "local:tui", sessionId: "thread-1" },
+    });
+    assert.deepEqual(await port.delivery_evidence({ target, attempt_id: "attempt-1", after_state: "replied" }), {
+      attempt_id: "attempt-1",
+      cursor: "cursor-1",
+      read_item_id: "item-agent-1",
+      source: "codexapp.message_status",
+      target: { scopeId: "local:tui", sessionId: "thread-1" },
+    });
+    await assert.rejects(
+      () => port.delivery_evidence({ target, attempt_id: "attempt-1", after_state: "read" }),
+      /cannot reconcile after read/,
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(socketPath, { force: true });
+  }
+});
+
 test("CodexApp bridge port refuses an implicit target scope mapping", () => {
   assert.throws(
     () => new CodexAppBridgePort({ socket: "/tmp/codex-hooks-port.sock", source: { scopeId: "hooks", sessionId: "hooksd" }, target_scopes: {} }).targetAddress({ namespace: "codex_tui", appserver_id: "unknown", thread_id: "thread-1" }),

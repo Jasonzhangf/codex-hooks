@@ -51,6 +51,23 @@ export function normalizeCodexAppCapabilities(value) {
   return [...new Set(capabilities)];
 }
 
+const DELIVERY_NEXT = Object.freeze({
+  accepted: "delivered",
+  unknown_delivery: "delivered",
+  delivered: "executed",
+  executed: "replied",
+  replied: "read",
+});
+
+function deliveryNextState(afterState) {
+  if (afterState == null) return "delivered";
+  const next = DELIVERY_NEXT[afterState];
+  if (!next) {
+    throw Object.assign(new Error(`codexapp bridge cannot reconcile after ${afterState}`), { code: "delivery_evidence_unavailable" });
+  }
+  return next;
+}
+
 // Bridge control methods and the hooks-facing port are different contracts.
 // Keep this explicit mapping at the transport boundary.
 export class CodexAppBridgePort {
@@ -123,22 +140,47 @@ export class CodexAppBridgePort {
 
   async delivery_evidence({ target, attempt_id, after_state }) {
     const id = assertNonEmpty(attempt_id, "attempt_id");
-    if (after_state && !["accepted", "unknown_delivery"].includes(after_state)) {
-      throw Object.assign(new Error(`codexapp bridge cannot reconcile after ${after_state}`), { code: "delivery_evidence_unavailable" });
-    }
     const address = this.targetAddress(target);
     const result = await this.client.call("message_status", { messageId: id });
     assertMessageStatusBinding(result, id, address, this.source);
-    const delivered = result?.evidence?.find((entry) => entry.state === "delivered");
-    if (!delivered?.targetReceipt) {
-      throw Object.assign(new Error(`codexapp has no delivery receipt for ${id}`), { code: "delivery_unresolved" });
-    }
-    return {
+    const nextState = deliveryNextState(after_state);
+    const evidence = Array.isArray(result?.evidence)
+      ? result.evidence.find((entry) => entry?.state === nextState)
+      : null;
+    const base = {
       attempt_id: id,
-      target_receipt: delivered.targetReceipt,
       source: "codexapp.message_status",
       target: address,
     };
+    if (nextState === "delivered") {
+      if (!evidence?.targetReceipt) {
+        throw Object.assign(new Error(`codexapp has no delivery receipt for ${id}`), { code: "delivery_unresolved" });
+      }
+      return { ...base, target_receipt: evidence.targetReceipt };
+    }
+    if (nextState === "executed") {
+      if (!evidence?.executionItemId) {
+        throw Object.assign(new Error(`codexapp has no execution evidence for ${id}`), { code: "delivery_unresolved" });
+      }
+      return { ...base, execution_item_id: evidence.executionItemId };
+    }
+    if (nextState === "replied") {
+      if (!evidence?.responseTurnId && !evidence?.responseItemId) {
+        throw Object.assign(new Error(`codexapp has no reply evidence for ${id}`), { code: "delivery_unresolved" });
+      }
+      return {
+        ...base,
+        response_turn_id: evidence.responseTurnId || null,
+        response_item_id: evidence.responseItemId || null,
+      };
+    }
+    if (nextState === "read") {
+      if (!evidence?.cursor || !evidence?.readItemId) {
+        throw Object.assign(new Error(`codexapp has no read evidence for ${id}`), { code: "delivery_unresolved" });
+      }
+      return { ...base, cursor: evidence.cursor, read_item_id: evidence.readItemId };
+    }
+    throw Object.assign(new Error(`codexapp bridge cannot reconcile after ${after_state}`), { code: "delivery_evidence_unavailable" });
   }
 
   close() {}

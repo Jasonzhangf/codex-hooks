@@ -7,10 +7,13 @@ const options = parseArgs(process.argv.slice(2));
 const input = await readStdin();
 const endpoint = normalizeLoopbackEndpoint(process.env.ROUTECODEX_HOOKS_ENDPOINT || loadEndpoint(options.config)).endpoint;
 const kind = options.kind;
+const intent = input.intent || null;
+const event = { ...input };
+delete event.intent;
 const response = await fetch(`${endpoint}/v1/hooks/dispatch`, {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ event: input, kind }),
+  body: JSON.stringify({ event, kind, intent }),
 });
 const body = await response.text();
 if (!response.ok) throw new Error(`hooks daemon rejected event: ${response.status} ${body}`);

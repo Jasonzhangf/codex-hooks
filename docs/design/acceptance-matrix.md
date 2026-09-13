@@ -4,9 +4,10 @@ Status labels are evidence levels, not intent: `pass` means the listed
 artifact or test currently proves that row; `pending-live` means the contract
 exists but the required real endpoint evidence is not present.
 
-`pass-adapter` means the internal bin was exercised against a real isolated
-native App Server through the control socket (accepted/receipt/execution/reply/
-read). It is not the same-entry hook-to-ACK trace, which stays `pending-live`.
+`pass-adapter` means the internal bin was exercised against a real native App
+Server through the control socket (accepted/receipt/execution/reply/read).
+`pass-live` means the same-entry hook stdin --> daemon --> codexapp --> native
+route reached native receipt/execution/reply/read evidence.
 
 | Requirement | Authoritative evidence | Status |
 | --- | --- | --- |
@@ -28,7 +29,7 @@ read). It is not the same-entry hook-to-ACK trace, which stays `pending-live`.
 | Native TUI send/receipt/execution/reply/read via internal bin | default TUI App Server trace, 2026-09-13 (`ADAPTER_LIVE_1789312075729` on thread `01a09b3f-ced2-70a1-9fc5-9d1124c9a8f0`) | pass-adapter |
 | Native TUI two-thread bidirectional delivery | default TUI App Server trace, 2026-09-13 (`A_TO_B_CROSS_1789310703_7b3d`, `B_TO_A_CROSS_1789310703_2e8c`) | pass-adapter |
 | RouteCodex managed startup | RouteCodex lifecycle owner and installed replay | pending-live |
-| Real TUI send/status/reply/ACK | running native TUI endpoint and same-entry trace | pending-live |
+| Real TUI send/status/reply/read via same-entry hook-to-native | default TUI App Server trace, 2026-09-13 (`SAME_ENTRY_HOOK_TO_A_1789319103`, `SAME_ENTRY_HOOK_TO_B3_1789319549`; daemon state `read`, native cursor and `readItemId`) | pass-live |
 | Real Desktop send/status/reply/ACK | running native Desktop App Server endpoint and same-entry trace | pending-live |
 | Framework enables no business Stopless | no enabled Stopless factory; `AGENTS.md` and docs | pass |
 | V3 Stopless resources removed | latest RouteCodex `origin/main` source scan and mapped gates | pass-source; runtime pending |

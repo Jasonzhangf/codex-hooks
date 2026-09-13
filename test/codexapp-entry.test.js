@@ -49,11 +49,11 @@ test("internal codexapp initializes the native App Server before target reads an
       clientInfo: { name: "rccv3-codexapp", title: "RouteCodex Hooks CodexApp", version: "0.1.0" },
       capabilities: { experimentalApi: true },
     });
-    assert.deepEqual(calls.slice(1, 4), [
-      ["initialized"],
+    assert.deepEqual(calls.slice(1, 3), [
       ["thread/read", { threadId: "thread-1" }],
       ["thread/items/list", { threadId: "thread-1", limit: 100, sortDirection: "desc" }],
     ]);
+    assert.equal(calls.some(([method]) => method === "initialized"), false);
     assert.deepEqual(calls.at(-1), ["thread/queue/add", {
       threadId: "thread-1",
       input: [{ type: "text", text: "probe" }],

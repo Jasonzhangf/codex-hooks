@@ -330,7 +330,6 @@ class NativeAppServer {
       clientInfo: { name: "rccv3-codexapp", title: "RouteCodex Hooks CodexApp", version: "0.1.0" },
       capabilities: { experimentalApi: true },
     });
-    await this.rpc.notify("initialized", {});
     this.initialized = true;
   }
 
@@ -436,11 +435,6 @@ class UnixWebSocketJsonRpc extends EventEmitter {
       this.pending.set(id, { resolve, reject, timer, method });
       this.socket.write(encodeFrame(JSON.stringify({ method, id, params })));
     });
-  }
-
-  async notify(method, params = {}) {
-    await this.connect();
-    this.socket.write(encodeFrame(JSON.stringify({ method, params })));
   }
 
   close() {

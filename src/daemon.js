@@ -165,7 +165,13 @@ export class HooksDaemon {
       return this.result(event, hookKind, "expired", { delivery });
     }
 
-    const observed = await this.codexapp.session_status(intent.target);
+    let observed;
+    try {
+      observed = await this.codexapp.session_status(intent.target);
+    } catch (error) {
+      const code = mapSessionStatusError(error);
+      return this.fail(event, hookKind, intent, code, String(error.code ?? "session_status_failed"), error.message);
+    }
     const observation = normalizeSessionObservation(observed);
     const state = observation.state;
     if (!SESSION_STATES.includes(state)) return this.fail(event, hookKind, intent, "unknown_session_state", state);
@@ -383,6 +389,22 @@ export class HooksDaemon {
       ...clone(extra),
     };
   }
+}
+
+const SESSION_STATUS_ERROR_MAP = Object.freeze({
+  target_scope_not_found: "target_scope_not_found",
+  session_not_found: "session_not_found",
+  invalid_request: "invalid_request",
+  native_transport_error: "session_status_unavailable",
+  transport_timeout: "session_status_unavailable",
+});
+
+function mapSessionStatusError(error) {
+  const code = typeof error?.code === "string" ? error.code : "";
+  if (SESSION_STATUS_ERROR_MAP[code]) return SESSION_STATUS_ERROR_MAP[code];
+  if (code === "native_transport_error" || code.startsWith("transport_")) return "session_status_unavailable";
+  if (typeof error?.message === "string" && error.message.includes("invalid thread id")) return "session_not_found";
+  return "unknown_session_state";
 }
 
 function assertAcceptedReceipt(value, attemptId) {

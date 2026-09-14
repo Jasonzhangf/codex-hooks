@@ -68,6 +68,26 @@ test("official Stop input wakes through codexapp without claiming native continu
   }
 });
 
+test("session status failures fail closed with explicit target/unknown codes", async () => {
+  const codexapp = fakeCodexapp("idle");
+  codexapp.session_status = async () => {
+    const error = Object.assign(new Error("target scope not found: local:missing"), { code: "target_scope_not_found" });
+    throw error;
+  };
+  const daemon = new HooksDaemon({ codexapp });
+  const result = await daemon.handleHook(event("Stop", { event_id: "scope-not-found" }), { intent: intent("scope-not-found") });
+  assert.equal(result.decision, "fail_closed");
+  assert.equal(result.error.code, "target_scope_not_found");
+
+  codexapp.session_status = async () => {
+    const error = Object.assign(new Error("invalid thread id: missing"), { code: "-32600" });
+    throw error;
+  };
+  const missing = await daemon.handleHook(event("Stop", { event_id: "session-not-found" }), { intent: intent("session-not-found") });
+  assert.equal(missing.decision, "fail_closed");
+  assert.equal(missing.error.code, "session_not_found");
+});
+
 test("native delivery evidence advances only through the exact receipt chain", async () => {
   const codexapp = fakeCodexapp("idle");
   const daemon = new HooksDaemon({ codexapp });

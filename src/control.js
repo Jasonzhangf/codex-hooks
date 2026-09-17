@@ -372,7 +372,7 @@ export class FrameworkControlPlane {
     };
     const status = await this.subagents.sessionStatus(target);
     const nativeState = status?.state;
-    if (nativeState !== "working") {
+    if (nativeState === "idle") {
       subagents[threadId] = {
         ...subagent,
         state: subagent.ephemeral ? "released" : "stopped",
@@ -382,6 +382,12 @@ export class FrameworkControlPlane {
       };
       this.store.putControl("subagents", subagents);
       return clone(subagents[threadId]);
+    }
+    if (nativeState !== "working") {
+      throw Object.assign(new Error(`subagent stop cannot resolve native state: ${nativeState ?? "missing"}`), {
+        code: "subagent_state_unresolved",
+        native_state: nativeState ?? null,
+      });
     }
     if (status.active_turn_id != null && status.active_turn_id !== subagent.turn_id) {
       throw Object.assign(new Error("subagent stop requires the registered live turn"), {

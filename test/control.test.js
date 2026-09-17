@@ -473,6 +473,35 @@ test("subagent stop records no_active_turn without calling interrupt", async () 
   assert.deepEqual(calls, ["status"]);
 });
 
+test("subagent stop fails closed when native state cannot prove idle or working", async () => {
+  for (const nativeState of ["unknown", "disconnected", "failed", "starting", "stopping"]) {
+    const daemon = new HooksDaemon({ codexapp: codexapp() });
+    const calls = [];
+    const subagents = {
+      async sessionStatus() { calls.push("status"); return { state: nativeState }; },
+      async interruptSubagent() { calls.push("interrupt"); return { state: "interrupted" }; },
+    };
+    const control = new FrameworkControlPlane({ store: daemon.store, subagents });
+    control.registerSubagent({
+      thread_id: `thread-${nativeState}`,
+      turn_id: `turn-${nativeState}`,
+      target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" },
+      prompt: "review",
+      ephemeral: true,
+    });
+    await assert.rejects(
+      () => control.mutate({ operation: "subagent.stop", thread_id: `thread-${nativeState}` }),
+      (error) => error.code === "subagent_state_unresolved"
+        && error.native_state === nativeState,
+    );
+    assert.deepEqual(calls, ["status"]);
+    const persisted = control.query().subagents[`thread-${nativeState}`];
+    assert.equal(persisted.state, "active");
+    assert.equal(persisted.stop_evidence, undefined);
+    assert.equal(persisted.stopped_at, undefined);
+  }
+});
+
 test("subagent stop fails explicitly when native stop capability is unavailable", async () => {
   const daemon = new HooksDaemon({ codexapp: codexapp() });
   const control = new FrameworkControlPlane({ store: daemon.store });

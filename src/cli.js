@@ -335,7 +335,7 @@ async function subagentCommand(args) {
       ...(options.profile ? { profile: options.profile } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
-      ...(options.ephemeral === true ? { ephemeral: true } : {}),
+      ephemeral: true,
       ...(options.owner_session ? { owner_session_id: options.owner_session } : {}),
       ...(options.id ? { attempt_id: options.id } : {}),
     });

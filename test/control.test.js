@@ -518,6 +518,25 @@ test("subagent create registers a fresh ephemeral child with a prompt digest", a
   assert.equal(created.prompt, undefined);
 });
 
+test("subagent create defaults to ephemeral without an explicit flag", async () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const calls = [];
+  const subagents = {
+    async createSubagent(request) {
+      calls.push(request);
+      return { thread_id: "thread-default-ephemeral", turn_id: "turn-default-ephemeral", state: "accepted" };
+    },
+  };
+  const control = new FrameworkControlPlane({ store: daemon.store, subagents });
+  const created = await control.mutate({
+    operation: "subagent.create",
+    prompt: "review the candidate",
+    target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" },
+  });
+  assert.equal(calls[0].ephemeral, true);
+  assert.equal(created.ephemeral, true);
+});
+
 test("subagent create rejects profile at the native create boundary", async () => {
   const daemon = new HooksDaemon({ codexapp: codexapp() });
   const control = new FrameworkControlPlane({

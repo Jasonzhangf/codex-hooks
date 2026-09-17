@@ -339,14 +339,14 @@ export class FrameworkControlPlane {
       ...(request.cwd == null ? {} : { cwd: assertNonEmpty(request.cwd, "cwd") }),
       ...(request.model == null ? {} : { model: assertNonEmpty(request.model, "model") }),
       ...(request.effort == null ? {} : { effort: assertNonEmpty(request.effort, "effort") }),
-      ...(request.ephemeral === true ? { ephemeral: true } : {}),
+      ephemeral: request.ephemeral !== false,
     });
     return this.registerSubagent({
       thread_id: receipt.thread_id,
       turn_id: receipt.turn_id,
       target,
       prompt,
-      ephemeral: request.ephemeral === true,
+      ephemeral: request.ephemeral !== false,
       ...(request.model == null ? {} : { model: request.model }),
       ...(request.effort == null ? {} : { effort: request.effort }),
       ...(request.owner_session_id == null ? {} : { owner_session_id: request.owner_session_id }),

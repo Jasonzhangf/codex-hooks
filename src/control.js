@@ -372,7 +372,7 @@ export class FrameworkControlPlane {
     };
     const status = await this.subagents.sessionStatus(target);
     const nativeState = status?.state;
-    if (nativeState === "idle") {
+    if (["idle", "waiting_for_input", "stopped"].includes(nativeState)) {
       subagents[threadId] = {
         ...subagent,
         state: subagent.ephemeral ? "released" : "stopped",

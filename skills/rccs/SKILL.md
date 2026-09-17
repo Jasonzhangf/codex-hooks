@@ -3,8 +3,8 @@ name: rccs
 description: Use the rccs CLI to schedule wakeups, wait without polling, inspect daemon state, and manage spawned subagents.
 ---
 
-`rccs` is the mutation surface for the local hooks daemon. MCP only reads
-daemon health and state.
+`rccs` is the mutation and control surface for the local hooks daemon. MCP is
+read-only and must not be used to create, update, stop, send, or spawn.
 
 ## Install and health
 
@@ -16,10 +16,13 @@ rccs status
 ```
 
 `rccs init` copies the bundled `skills/` into `~/.agent/skills` and
-`~/.codex/skills`, rewrites the wrappers, and can be repeated safely. MCP exposes
-`routecodex_hooks_status` as a read-only daemon status tool; use it to check
-health, schedules, session bindings, and subagent registry state. Do not mutate
-through MCP.
+`~/.codex/skills`, rewrites the wrappers, and can be repeated safely. MCP
+exposes `routecodex_hooks_status` as a read-only daemon status tool. Use it to
+read health, schedules, bindings, subagents, LongHorizon state, and delivery
+evidence. Do not mutate through MCP.
+
+Use `rccs <command> --help` before constructing a command when the exact
+argument shape matters. Help is side-effect free.
 
 ## Scheduling and waiting
 
@@ -39,11 +42,33 @@ rccs schedule resume check
 rccs schedule stop check
 ```
 
+### Schedule parameters
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `--session <alias>` | required for notify/wait | Resolve the persisted target at registration time. Changing the binding later does not retarget the schedule. |
+| `--target <namespace>/<appserver>` | required for subagent | Native target scope for a subagent schedule. |
+| `--once` | default | One-shot occurrence. It cannot be combined with `--every`. |
+| `--every <duration>` | none | Recurring interval in `ms`, `s`, `m`, `h`, or `d`, for example `5m`. |
+| `--send-mode idle_only` | default | Defer while working or input-active. |
+| `--send-mode working_allowed` | opt-in | Permit a working target only when explicitly requested; input-active still suppresses. |
+| `--busy-policy defer` | default | Persist one pending occurrence and flush it when the target becomes eligible. |
+| `--busy-policy skip` | opt-in | Record a skipped occurrence and wait for the next interval; no backlog is created. |
+| `--action notify` | default | Send the body to the bound session. |
+| `--action subagent` | opt-in | Create a fresh native child from the body prompt. Requires `--target`. |
+| `--cwd <absolute-path>` | native default | Working directory for a subagent schedule. |
+| `--model <model>` | native default | Explicit child model override. |
+| `--effort <effort>` | native default | Explicit child effort override. |
+| `--ephemeral` | required by subagent schedule | Native child is disposable. Subagent schedules always use an ephemeral thread. |
+| `--allow-concurrent` | false | Required for recurring subagent creation. |
+| `--owner-session <session-id>` | current session when available | Ownership scope used by `list` and stop controls. |
+| `--profile <profile>` | rejected | The native `thread/start` boundary has no Codex profile selector. It is rejected, never silently ignored. |
+
 `schedule list` defaults to the current session. Use `--global` to inspect all
-schedules. A recurring notification coalesces missed occurrences into one
-delivery. `idle_only` is the default: while the target is working, delivery is
-deferred until it is idle. Use `--send-mode working_allowed` only when the
-message is safe to inject during a working turn.
+schedules. `schedule stop` is terminal and disables future firing. `pause` and
+`resume` are reversible. A recurring notification coalesces missed occurrences
+into one delivery. A missing, unknown, disconnected, or failed target fails
+closed; a dead session is not repeatedly notified.
 
 For waits of one minute or more, do not poll in the agent. Register a one-shot
 daemon wait. The default form blocks in the CLI until delivery reaches a
@@ -54,6 +79,37 @@ the session later.
 rccs wait 2m 'continue after the wait' --session work
 rccs wait 30m 'recheck the long-running task' --session work --async
 ```
+
+### Wait parameters
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `<duration>` | required | Wait deadline in `ms`, `s`, `m`, `h`, or `d`. |
+| `[body]` | `Wait elapsed. Continue the current task.` | Message sent when the wait expires. |
+| `--session <alias>` | current matching binding | Target binding. |
+| `--async` | false | Register and return immediately instead of blocking. |
+| `--send-mode idle_only` | async default | Defer until idle. |
+| `--send-mode working_allowed` | blocking default | Permit delivery while working. |
+| `--busy-policy defer` | default | Persist the pending wake when delivery is not currently legal. |
+| `--busy-policy skip` | opt-in | Record a skipped occurrence instead of retaining it. |
+| `--id <id>` | `wait-<timestamp>-<pid>` | Deterministic schedule identity. |
+| `--timeout <duration>` | daemon wait limit | Maximum blocking wait before returning `wait_timed_out`. |
+| `--owner-session <session-id>` | current session when available | Ownership scope. |
+
+## Send operations
+
+Ordinary schedules and waits use the standard queue path. They do not expose a
+CLI option that silently changes their delivery into a steer or interrupt.
+
+| Operation | Legal use | Forbidden use |
+| --- | --- | --- |
+| `queue` | Ordinary notification, wait wakeup, Stopless feedback, LongHorizon wake, or explicitly allowed working delivery. | Unknown/disconnected target, active manual input, or a target that cannot accept queued submissions. |
+| `steer` | One live working turn exists, the caller explicitly selects same-turn correction, and the turn identity matches the observed active turn. | Ordinary schedule text, missing or stale turn identity, idle target, or automatic retry. |
+| `interrupt` | Explicit user or control-plane stop, including `rccs subagent stop`. | Normal message delivery, retry, or replacing queue behavior. |
+
+Queue is the default. Steer and interrupt are never inferred from message text.
+`rccs subagent stop` is the only current CLI path that intentionally uses
+`turn/interrupt`.
 
 ## Subagents
 
@@ -70,13 +126,13 @@ rccs subagent stop <thread-id>
 ```
 
 Subagent schedules create ephemeral children; `--ephemeral` states that
-contract explicitly. Recurring subagent creation requires `--allow-concurrent`. `subagent stop`
-reads native status first and, for a working turn, sends `turn/interrupt` with
-the recorded `thread_id` and `turn_id`. An idle child records
-`no_active_turn`; an ephemeral child becomes `released`, otherwise it becomes
-`stopped`. Archive, delete, and close are not part of the command surface.
-Never claim stop from an accepted request alone; inspect the returned state
-and stop evidence.
+contract explicitly. Recurring subagent creation requires `--allow-concurrent`.
+`subagent stop` reads native status first and, for a working turn, sends
+`turn/interrupt` with the recorded `thread_id` and `turn_id`. An idle child
+records `no_active_turn`; an ephemeral child becomes `released`, otherwise it
+becomes `stopped`. Archive, delete, and close are not part of the command
+surface. Never claim stop from an accepted request alone; inspect the returned
+state and stop evidence.
 
 `--model` and `--effort` are passed to the native child when supplied.
 `--profile` is rejected explicitly because this App Server `thread/start`
@@ -114,3 +170,10 @@ rccs schedule stop <id>
 Use it when the goal is complete, the recurring task is no longer needed,
 ownership moved, the user asked to stop, or the session ended. Do not keep a
 recurring wake alive merely because it was previously registered.
+
+## Request and schema injection
+
+The official Hook surface can provide `additionalContext` on `SessionStart`
+and `UserPromptSubmit`. It cannot modify the complete provider request, append
+arbitrary tool schemas, or rewrite the final system prompt. Request/schema
+injection is therefore `blocked`; do not simulate it through message text.

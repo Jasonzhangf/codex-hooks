@@ -555,6 +555,41 @@ test("internal codexapp keeps an ephemeral working status without unsupported ac
   }
 });
 
+test("internal codexapp preserves active-turn transport failures", async () => {
+  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-active-turn-error-"));
+  const appserverSocket = join(root, "appserver.sock");
+  const controlSocket = join(root, "codexapp.sock");
+  const native = await startNativeFixture(appserverSocket, [], {
+    threadStatus: { type: "working" },
+    turnsError: { code: -32603, message: "transport closed" },
+  });
+  const codexapp = spawn(process.execPath, [
+    "src/codexapp-entry.js",
+    "--socket", controlSocket,
+    "--targets-file", join(root, "targets.json"),
+  ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await readLine(codexapp.stdout);
+    await control(controlSocket, "register_target", {
+      scope_id: "local:test",
+      appserver_id: "test-appserver",
+      namespace: "codex_tui",
+      endpoint: `unix://${appserverSocket}`,
+    });
+    await assert.rejects(
+      control(controlSocket, "session_status", {
+        address: { scopeId: "local:test", sessionId: "thread-child" },
+      }),
+      (error) => error.code === "native_transport_error" && error.message.includes("transport closed"),
+    );
+  } finally {
+    codexapp.kill("SIGTERM");
+    await once(codexapp, "exit");
+    await new Promise((resolve) => native.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("internal codexapp steers a live turn through turn/steer", async () => {
   const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-steer-"));
   const appserverSocket = join(root, "appserver.sock");

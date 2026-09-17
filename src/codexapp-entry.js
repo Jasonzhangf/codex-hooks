@@ -154,7 +154,7 @@ async function sessionStatus(address) {
       const activeTurnId = await native.activeTurnId(sessionId);
       if (activeTurnId) status.active_turn_id = activeTurnId;
     } catch (error) {
-      if (error?.code !== "active_turn_unavailable") throw error;
+      if (error?.code !== "native_method_unsupported") throw error;
     }
   }
   return {
@@ -497,7 +497,10 @@ class NativeAppServer {
     try {
       page = await this.rpc.call("thread/turns/list", { threadId, limit: 100, sortDirection: "desc" });
     } catch (error) {
-      throw codedError(`active turn read failed: ${error.message}`, "active_turn_unavailable");
+      if (error?.code === -32601 || /does not support|not supported|unsupported/i.test(error?.message || "")) {
+        throw codedError(`active turn read failed: ${error.message}`, "native_method_unsupported");
+      }
+      throw codedError(`active turn read failed: ${error.message}`, "native_transport_error");
     }
     const turns = Array.isArray(page?.data) ? page.data : [];
     const active = turns.filter((turn) => turn?.status === "inProgress");

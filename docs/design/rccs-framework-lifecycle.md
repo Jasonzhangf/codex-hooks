@@ -148,13 +148,13 @@ Every scheduled notification checks the target before dispatch:
 - the target must still exist before every send, so a dead session is not
   repeatedly notified.
 
-Subagent schedules use native `thread/start` and `turn/start`. The default
-profile is the current effective Codex profile, parsed once at startup and
-reused as a snapshot for subsequent spawns. Explicit profile, model, and
-effort overrides may replace that snapshot without changing the caller's
+Subagent schedules use native `thread/start` and `turn/start`. This native
+boundary does not expose a Codex configuration-profile selector, so an
+explicit `--profile` is rejected rather than accepted and discarded. Explicit
+`model` and `effort` overrides may be applied without changing the caller's
 runtime state. Spawned subagents never inherit the caller's conversation
-context; they receive only the typed prompt, target scope, profile snapshot,
-and explicit override fields.
+context; they receive only the typed prompt, target scope, and explicit
+override fields.
 
 `rccs subagent stop` reads the native session state first. A working child is
 interrupted through `turn/interrupt` with its registered `thread_id` and

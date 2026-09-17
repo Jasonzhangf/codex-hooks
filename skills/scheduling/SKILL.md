@@ -37,7 +37,9 @@ rccs schedule add subagent-1 <at-iso8601> '<prompt>' \
 
 Recurring subagent schedules require explicit `--allow-concurrent`. The receipt
 records the created thread and turn identities; no tmux text is used as a
-substitute for native creation.
+substitute for native creation. `--model` and `--effort` are forwarded to the
+native child. `--profile` is rejected explicitly because the current App Server
+`thread/start` boundary has no Codex configuration-profile selector.
 
 Do not poll inside an agent for waits of one minute or more. Register a
 one-shot daemon wait instead:

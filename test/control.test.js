@@ -535,6 +535,84 @@ test("subagent create rejects profile at the native create boundary", async () =
   );
 });
 
+test("schedule subagent rejects profile before persistence and keeps effort patchable", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  const target = { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" };
+  assert.throws(
+    () => control.mutate({
+      operation: "schedule.upsert",
+      id: "profile-schedule",
+      action: "subagent",
+      at: "2026-09-16T12:00:00.000Z",
+      body: "run",
+      target,
+      profile: "review",
+    }),
+    (error) => error.code === "unsupported_profile",
+  );
+  assert.equal(control.query().schedules["profile-schedule"], undefined);
+
+  const created = control.mutate({
+    operation: "schedule.upsert",
+    id: "effort-schedule",
+    action: "subagent",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "run",
+    target,
+    effort: "high",
+  });
+  assert.equal(created.effort, "high");
+  const updated = control.mutate({ operation: "schedule.update", id: "effort-schedule", effort: "low" });
+  assert.equal(updated.effort, "low");
+});
+
+test("non-subagent schedules reject subagent-only fields instead of dropping them", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  assert.throws(
+    () => control.mutate({
+      operation: "schedule.upsert",
+      id: "notify-with-effort",
+      at: "2026-09-16T12:00:00.000Z",
+      body: "wake",
+      target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" },
+      effort: "high",
+    }),
+    /require action=subagent/,
+  );
+});
+
+test("session_missing schedules are terminal for resume and update", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  control.mutate({
+    operation: "schedule.upsert",
+    id: "missing-session",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "wake",
+    target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" },
+  });
+  const schedules = daemon.store.getControl("schedules");
+  schedules["missing-session"] = {
+    ...schedules["missing-session"],
+    state: "session_missing",
+    enabled: false,
+  };
+  daemon.store.putControl("schedules", schedules);
+
+  assert.throws(
+    () => control.mutate({ operation: "schedule.resume", id: "missing-session" }),
+    /schedule is terminal/,
+  );
+  assert.throws(
+    () => control.mutate({ operation: "schedule.update", id: "missing-session", body: "retry" }),
+    /schedule is terminal/,
+  );
+  assert.equal(control.query().schedules["missing-session"].state, "session_missing");
+  assert.equal(control.query().schedules["missing-session"].enabled, false);
+});
+
 test("longhorizon registration is paused until explicit activation", () => {
   const daemon = new HooksDaemon({ codexapp: codexapp() });
   const control = new FrameworkControlPlane({ store: daemon.store });
@@ -606,6 +684,42 @@ test("periodic longhorizon owns a paused skip schedule and stop closes it", () =
   assert.equal(stopped.state, "stopped");
   assert.equal(control.query().schedules[registered.schedule_id].state, "stopped");
   assert.equal(control.query().operators.timer.enabled, false);
+});
+
+test("periodic longhorizon activation cannot resurrect a session_missing schedule", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  control.mutate({
+    operation: "session.bind",
+    alias: "periodic-missing",
+    target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui", session_id: "session", thread_id: "thread" },
+  });
+  const registered = control.mutate({
+    operation: "longhorizon.register",
+    id: "periodic-missing",
+    mode: "periodic",
+    prompt: "inspect the goal document",
+    session: "periodic-missing",
+    interval_ms: 1000,
+    at: "2026-09-17T00:00:00.000Z",
+  });
+  const schedules = daemon.store.getControl("schedules");
+  schedules[registered.schedule_id] = {
+    ...schedules[registered.schedule_id],
+    state: "session_missing",
+    enabled: false,
+  };
+  daemon.store.putControl("schedules", schedules);
+
+  assert.throws(
+    () => control.mutate({ operation: "longhorizon.activate", id: "periodic-missing" }),
+    /longhorizon schedule is terminal/,
+  );
+  const longhorizon = control.query().longhorizon["periodic-missing"];
+  assert.equal(longhorizon.enabled, false);
+  assert.equal(longhorizon.state, "registered");
+  assert.equal(control.query().schedules[registered.schedule_id].state, "session_missing");
+  assert.equal(control.query().schedules[registered.schedule_id].enabled, false);
 });
 
 test("subagent stop accepts a working turn with no observed active turn id", async () => {

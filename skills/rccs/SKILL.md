@@ -77,6 +77,11 @@ the recorded `thread_id` and `turn_id`. An idle child records
 Never claim stop from an accepted request alone; inspect the returned state
 and stop evidence.
 
+`--model` and `--effort` are passed to the native child when supplied.
+`--profile` is rejected explicitly because this App Server `thread/start`
+boundary has no Codex configuration-profile selector; do not retry it as a
+silent fallback.
+
 ## LongHorizon
 
 LongHorizon is registered paused and requires explicit activation:

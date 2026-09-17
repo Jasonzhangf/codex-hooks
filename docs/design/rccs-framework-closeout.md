@@ -121,7 +121,6 @@ rccs schedule add <id> <at> <body>
   [--expires-at <iso8601>]
   [--action notify|subagent]
   [--cwd <absolute-path>]
-  [--profile <profile>]
   [--model <model>]
   [--effort <effort>]
   [--allow-concurrent]
@@ -222,7 +221,7 @@ The status gate is the matrix in
 | `working` | `busy_policy=defer` persists one pending intent; `busy_policy=skip` records a skipped occurrence and schedules the next interval | queue once; use steer only with an explicit steer request and a live turn identity |
 | `starting` or `stopping` | defer | defer |
 | `unknown`, `disconnected`, or `failed` | fail closed | fail closed |
-| `session_missing` | stop recurring firing and require explicit rebind/resume | stop recurring firing and require explicit rebind/resume |
+| `session_missing` | stop recurring firing; remove and re-register after the target is fixed | stop recurring firing; remove and re-register after the target is fixed |
 
 `busy_policy=defer` is the default for ordinary notifications. It preserves
 one pending occurrence and flushes it when the target becomes idle.
@@ -337,16 +336,16 @@ fresh and isolated:
 
 - no caller conversation history is copied;
 - no caller thread is resumed or forked for a disposable child;
-- the prompt, cwd, target scope, and explicit profile/model/effort fields are
+- the prompt, cwd, target scope, and explicit model/effort fields are
   the only inputs;
 - the native thread and turn receipts are persisted before the registry
   reports success.
 
-The default profile is a startup snapshot of the effective Codex profile.
-An explicit `--profile` override replaces that snapshot for the child only.
-The CodexApp adapter must reject a profile/model/effort field that the native
-App Server cannot represent. It must not silently drop the field or fall back
-to a different model.
+The native App Server boundary used by this release does not expose a Codex
+configuration-profile selector on `thread/start`. A requested `--profile` is
+therefore rejected explicitly at the schedule/subagent registration boundary;
+it is never accepted and discarded. `model` and `effort` remain explicit
+per-child overrides when the native boundary accepts them.
 
 ### 8.2 List fields
 
@@ -360,7 +359,7 @@ to a different model.
 | `owner_session_id` | registering session, when present |
 | `schedule_id`, `occurrence_id` | schedule provenance, when present |
 | `prompt_digest` | digest of the submitted prompt, not a second copy of secrets |
-| `profile`, `model`, `effort` | effective child settings or explicit `null` |
+| `model`, `effort` | effective child settings or explicit `null` |
 | `ephemeral` | true when native `thread/start` used `ephemeral: true` |
 | `state` | normalized lifecycle state |
 | `created_at`, `last_seen_at` | registry and native observation times |

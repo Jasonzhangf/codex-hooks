@@ -190,6 +190,7 @@ export class TimerOperator {
       scheduled_at: at,
       ...(schedule.cwd == null ? {} : { cwd: schedule.cwd }),
       ...(schedule.model == null ? {} : { model: schedule.model }),
+      ...(schedule.effort == null ? {} : { effort: schedule.effort }),
     });
     if (typeof this.registerSubagent === "function") {
       try {
@@ -199,6 +200,8 @@ export class TimerOperator {
           target,
           prompt: schedule.body,
           ...(schedule.owner_session_id == null ? {} : { owner_session_id: schedule.owner_session_id }),
+          ...(schedule.model == null ? {} : { model: schedule.model }),
+          ...(schedule.effort == null ? {} : { effort: schedule.effort }),
           schedule_id: schedule.id,
           occurrence_id: occurrenceId,
           created_at: at,

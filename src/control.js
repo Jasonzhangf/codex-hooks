@@ -136,6 +136,7 @@ export class FrameworkControlPlane {
     const id = assertNonEmpty(request.id, "id");
     const action = request.action || SCHEDULE_ACTIONS.NOTIFY;
     if (!Object.values(SCHEDULE_ACTIONS).includes(action)) throw new Error(`unsupported schedule action: ${action}`);
+    assertScheduleActionOptions(action, request);
     const mode = request.mode || SCHEDULE_MODES.ONCE;
     if (!Object.values(SCHEDULE_MODES).includes(mode)) throw new Error(`unsupported schedule mode: ${mode}`);
     const at = assertNonEmpty(request.at, "at");
@@ -178,6 +179,7 @@ export class FrameworkControlPlane {
       ...(action === SCHEDULE_ACTIONS.SUBAGENT ? {
         ...(request.cwd == null ? {} : { cwd: assertNonEmpty(request.cwd, "cwd") }),
         ...(request.model == null ? {} : { model: assertNonEmpty(request.model, "model") }),
+        ...(request.effort == null ? {} : { effort: assertNonEmpty(request.effort, "effort") }),
         ...(request.allow_concurrent === true ? { allow_concurrent: true } : {}),
       } : {}),
       state: "configured",
@@ -241,6 +243,8 @@ export class FrameworkControlPlane {
     if (updated.action === SCHEDULE_ACTIONS.NOTIFY) {
       delete updated.cwd;
       delete updated.model;
+      delete updated.effort;
+      delete updated.profile;
       delete updated.allow_concurrent;
     }
     const scheduleFieldsChanged = patch.at != null
@@ -464,6 +468,14 @@ export class FrameworkControlPlane {
     if (!record) throw new Error(`longhorizon not found: ${id}`);
     if (record.state === "removed") throw new Error(`longhorizon is removed: ${id}; register it again before activation`);
     if (record.state === "stopped") throw new Error(`longhorizon is stopped: ${id}; register it again before activation`);
+    if (enabled && record.mode === "periodic" && record.schedule_id) {
+      const schedules = this.store.getControl("schedules") || {};
+      const schedule = schedules[record.schedule_id];
+      if (!schedule) throw new Error(`longhorizon schedule not found: ${record.schedule_id}`);
+      if (isTerminalSchedule(schedule)) {
+        throw new Error(`longhorizon schedule is terminal: ${record.schedule_id}; register it again before activation`);
+      }
+    }
     records[id] = {
       ...record,
       enabled,
@@ -549,7 +561,7 @@ function positiveInteger(value, name) {
   return value;
 }
 
-const TERMINAL_SCHEDULE_STATES = new Set(["cancelled", "stopped"]);
+const TERMINAL_SCHEDULE_STATES = new Set(["cancelled", "stopped", "session_missing"]);
 const STOPPABLE_SCHEDULE_STATES = new Set([
   "configured",
   "enabled",
@@ -571,6 +583,7 @@ function normalizeSchedulePatch(request, current) {
   const patch = {};
   const action = request.action ?? current.action ?? SCHEDULE_ACTIONS.NOTIFY;
   if (!Object.values(SCHEDULE_ACTIONS).includes(action)) throw new Error(`unsupported schedule action: ${action}`);
+  assertScheduleActionOptions(action, request);
   if (request.action != null) patch.action = action;
 
   const mode = request.mode ?? current.mode ?? SCHEDULE_MODES.ONCE;
@@ -605,6 +618,7 @@ function normalizeSchedulePatch(request, current) {
   }
   if (request.cwd != null) patch.cwd = assertNonEmpty(request.cwd, "cwd");
   if (request.model != null) patch.model = assertNonEmpty(request.model, "model");
+  if (request.effort != null) patch.effort = assertNonEmpty(request.effort, "effort");
   if (request.allow_concurrent != null) {
     if (typeof request.allow_concurrent !== "boolean") throw new Error("allow_concurrent must be boolean");
     patch.allow_concurrent = request.allow_concurrent;
@@ -624,4 +638,20 @@ function normalizeSchedulePatch(request, current) {
     throw new Error("recurring subagent schedules require allow_concurrent: true");
   }
   return patch;
+}
+
+function assertScheduleActionOptions(action, request) {
+  if (action === SCHEDULE_ACTIONS.SUBAGENT) {
+    if (request.profile != null) {
+      throw Object.assign(new Error("schedule subagent profile is not supported by the native App Server create boundary"), {
+        code: "unsupported_profile",
+      });
+    }
+    return;
+  }
+  const subagentOnlyFields = ["cwd", "model", "effort", "profile", "allow_concurrent"]
+    .filter((field) => request[field] != null);
+  if (subagentOnlyFields.length > 0) {
+    throw new Error(`schedule fields require action=subagent: ${subagentOnlyFields.join(", ")}`);
+  }
 }

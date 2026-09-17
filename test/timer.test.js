@@ -322,8 +322,11 @@ test("subagent schedule invokes native create once and records thread and turn r
     body: "run the task",
     target: { namespace: "codex_tui", appserver_id: "tui-appserver", scope_id: "local:tui" },
     cwd: "/tmp",
+    model: "test-model",
+    effort: "high",
   });
   const created = [];
+  const registered = [];
   const timer = new TimerOperator({
     store,
     clock: new ManualClock("2026-09-11T10:00:00.000Z"),
@@ -331,6 +334,10 @@ test("subagent schedule invokes native create once and records thread and turn r
     createSubagent: async (request) => {
       created.push(request);
       return { thread_id: "thread-new", turn_id: "turn-new" };
+    },
+    registerSubagent: async (request) => {
+      registered.push(request);
+      return request;
     },
   });
 
@@ -343,7 +350,11 @@ test("subagent schedule invokes native create once and records thread and turn r
     attempt_id: "timer:spawn-once:2026-09-11T10:00:00.000Z",
     scheduled_at: "2026-09-11T10:00:00.000Z",
     cwd: "/tmp",
+    model: "test-model",
+    effort: "high",
   }]);
+  assert.equal(registered[0].model, "test-model");
+  assert.equal(registered[0].effort, "high");
   const persisted = store.getControl("schedules")["spawn-once"];
   assert.equal(persisted.state, "sent");
   assert.equal(persisted.last_delivery.thread_id, "thread-new");

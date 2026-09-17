@@ -150,8 +150,12 @@ async function sessionStatus(address) {
   const thread = await native.threadStatus(sessionId);
   const status = normalizeThreadStatus(thread.status);
   if (status.state === "working") {
-    const activeTurnId = await native.activeTurnId(sessionId);
-    if (activeTurnId) status.active_turn_id = activeTurnId;
+    try {
+      const activeTurnId = await native.activeTurnId(sessionId);
+      if (activeTurnId) status.active_turn_id = activeTurnId;
+    } catch (error) {
+      if (error?.code !== "active_turn_unavailable") throw error;
+    }
   }
   return {
     address: { scopeId: target.scope_id, sessionId },

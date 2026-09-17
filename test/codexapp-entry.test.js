@@ -518,6 +518,43 @@ test("internal codexapp interrupts a native subagent thread", async () => {
   }
 });
 
+test("internal codexapp keeps an ephemeral working status without unsupported active-turn lookup", async () => {
+  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-ephemeral-status-"));
+  const appserverSocket = join(root, "appserver.sock");
+  const controlSocket = join(root, "codexapp.sock");
+  const calls = [];
+  const native = await startNativeFixture(appserverSocket, calls, {
+    threadStatus: { type: "working" },
+    turnsError: { code: -32601, message: "ephemeral threads do not support thread/turns/list" },
+  });
+  const codexapp = spawn(process.execPath, [
+    "src/codexapp-entry.js",
+    "--socket", controlSocket,
+    "--targets-file", join(root, "targets.json"),
+  ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await readLine(codexapp.stdout);
+    await control(controlSocket, "register_target", {
+      scope_id: "local:test",
+      appserver_id: "test-appserver",
+      namespace: "codex_tui",
+      endpoint: `unix://${appserverSocket}`,
+    });
+    const status = await control(controlSocket, "session_status", {
+      address: { scopeId: "local:test", sessionId: "thread-child" },
+    });
+    assert.deepEqual(status.status, { state: "working", input_active: false });
+    assert.deepEqual(calls.filter(([method]) => method === "thread/turns/list"), [
+      ["thread/turns/list", { threadId: "thread-child", limit: 100, sortDirection: "desc" }],
+    ]);
+  } finally {
+    codexapp.kill("SIGTERM");
+    await once(codexapp, "exit");
+    await new Promise((resolve) => native.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("internal codexapp steers a live turn through turn/steer", async () => {
   const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-steer-"));
   const appserverSocket = join(root, "appserver.sock");

@@ -14,7 +14,7 @@ const SERVICE = Object.freeze({ scopeId: "local:hooks", sessionId: "hooksd", kin
 const CAPABILITIES = Object.freeze({
   protocol: PROTOCOL,
   query: ["capabilities", "status", "list_threads", "session_status", "message_status"],
-  execution: ["register_target", "unregister_target", "send", "create_subagent"],
+  execution: ["register_target", "unregister_target", "send", "create_subagent", "interrupt_turn", "archive_thread"],
   namespaces: ["codex_app", "codex_tui"],
   routeRules: ["service_to_registered_target"],
 });
@@ -105,6 +105,8 @@ async function dispatch(request) {
     case "session_status": return sessionStatus(params.address);
     case "send": return sendMessage(params.message || params);
     case "create_subagent": return createSubagent(params);
+    case "interrupt_turn": return interruptTurn(params);
+    case "archive_thread": return archiveThread(params);
     case "message_status": return messageStatus(params.messageId);
     default: throw codedError(`unknown codexapp method: ${method}`, "method_not_found");
   }
@@ -276,7 +278,7 @@ function publicScope(target) {
     namespace: target.namespace,
     endpoint: target.endpoint,
     sessions: [],
-    capabilities: ["session_status", "send_message_to_thread", "create_subagent"],
+    capabilities: ["session_status", "send_message_to_thread", "create_subagent", "interrupt_turn", "archive_thread"],
   };
 }
 
@@ -309,6 +311,40 @@ async function createSubagent(input) {
     turnId: native.turnId,
     thread: native.thread,
     turn: native.turn,
+  };
+}
+
+async function interruptTurn(input) {
+  if (!input || typeof input !== "object") throw codedError("interrupt_turn params are required", "invalid_request");
+  const { target, sessionId } = resolveTarget(input.address);
+  const threadId = required(input.threadId || sessionId, "threadId");
+  const turnId = required(input.turnId, "turnId");
+  if (threadId !== sessionId) throw codedError("interrupt_turn threadId must match address.sessionId", "invalid_request");
+  await adapter(target).interruptTurn(threadId, turnId);
+  return {
+    protocol: PROTOCOL,
+    scopeId: target.scope_id,
+    appserverId: target.appserver_id,
+    namespace: target.namespace,
+    threadId,
+    turnId,
+    state: "interrupted",
+  };
+}
+
+async function archiveThread(input) {
+  if (!input || typeof input !== "object") throw codedError("archive_thread params are required", "invalid_request");
+  const { target, sessionId } = resolveTarget(input.address);
+  const threadId = required(input.threadId || sessionId, "threadId");
+  if (threadId !== sessionId) throw codedError("archive_thread threadId must match address.sessionId", "invalid_request");
+  await adapter(target).archiveThread(threadId);
+  return {
+    protocol: PROTOCOL,
+    scopeId: target.scope_id,
+    appserverId: target.appserver_id,
+    namespace: target.namespace,
+    threadId,
+    state: "archived",
   };
 }
 
@@ -453,6 +489,16 @@ class NativeAppServer {
       throw codedError("turn/start returned no turn identity", "native_transport_error");
     }
     return { threadId: thread.id, turnId: turn.id, thread, turn };
+  }
+
+  async interruptTurn(threadId, turnId) {
+    await this.connect();
+    await this.rpc.call("turn/interrupt", { threadId, turnId });
+  }
+
+  async archiveThread(threadId) {
+    await this.connect();
+    await this.rpc.call("thread/archive", { threadId });
   }
 
   close() {

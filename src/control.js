@@ -18,11 +18,12 @@ export const OPERATOR_REGISTRY = Object.freeze([
 const OPERATORS = Object.freeze(OPERATOR_REGISTRY.map((entry) => entry.name));
 
 export class FrameworkControlPlane {
-  constructor({ store }) {
+  constructor({ store, subagents = null }) {
     if (!store || typeof store.getControl !== "function" || typeof store.putControl !== "function") {
       throw new Error("control plane requires a state store");
     }
     this.store = store;
+    this.subagents = subagents;
   }
 
   query() {
@@ -31,6 +32,7 @@ export class FrameworkControlPlane {
       operator_registry: clone(OPERATOR_REGISTRY),
       session_bindings: this.store.getControl("session_bindings") || {},
       schedules: this.store.getControl("schedules") || {},
+      subagents: this.store.getControl("subagents") || {},
     };
   }
 
@@ -47,6 +49,8 @@ export class FrameworkControlPlane {
     if (operation === "schedule.resume") return this.resumeSchedule(request);
     if (operation === "schedule.update") return this.updateSchedule(request);
     if (operation === "schedule.stop") return this.stopSchedule(request);
+    if (operation === "wait.create" || operation === "wait.block") return this.addWait(request);
+    if (operation === "subagent.close") return this.closeSubagent(request);
     throw new Error(`unsupported control operation: ${operation}`);
   }
 
@@ -88,7 +92,7 @@ export class FrameworkControlPlane {
     const action = request.action || SCHEDULE_ACTIONS.NOTIFY;
     let alias = null;
     let target = request.target;
-    if (action === SCHEDULE_ACTIONS.NOTIFY) {
+    if (action === SCHEDULE_ACTIONS.NOTIFY || action === SCHEDULE_ACTIONS.WAIT) {
       alias = assertNonEmpty(request.session, "session");
       const bindings = this.store.getControl("session_bindings") || {};
       const binding = bindings[alias];
@@ -104,6 +108,13 @@ export class FrameworkControlPlane {
     return { ...schedule, ...(alias == null ? {} : { session: alias }), timer_enabled: true };
   }
 
+  addWait(request) {
+    if (request.mode != null && request.mode !== SCHEDULE_MODES.ONCE) {
+      throw new Error("wait schedules must be one-shot");
+    }
+    return this.addSchedule({ ...request, action: SCHEDULE_ACTIONS.WAIT, mode: SCHEDULE_MODES.ONCE });
+  }
+
   upsertSchedule(request) {
     const id = assertNonEmpty(request.id, "id");
     const action = request.action || SCHEDULE_ACTIONS.NOTIFY;
@@ -115,6 +126,9 @@ export class FrameworkControlPlane {
     const sendMode = request.send_mode || SEND_MODES.IDLE_ONLY;
     if (!Object.values(SEND_MODES).includes(sendMode)) throw new Error(`unsupported send mode: ${sendMode}`);
     if (Number.isNaN(Date.parse(at))) throw new Error("schedule time must be an ISO timestamp");
+    if (action === SCHEDULE_ACTIONS.WAIT && mode !== SCHEDULE_MODES.ONCE) {
+      throw new Error("wait schedules must be one-shot");
+    }
     if (mode === SCHEDULE_MODES.INTERVAL) {
       if (!Number.isInteger(request.interval_ms) || request.interval_ms < 1) {
         throw new Error("schedule interval_ms must be a positive integer");
@@ -128,6 +142,8 @@ export class FrameworkControlPlane {
     const target = action === SCHEDULE_ACTIONS.SUBAGENT
       ? normalizeTargetScope(request.target)
       : normalizeTarget(request.target);
+    const ownerSessionId = request.owner_session_id
+      ?? (([SCHEDULE_ACTIONS.NOTIFY, SCHEDULE_ACTIONS.WAIT].includes(action) && target.thread_id) ? target.thread_id : null);
     const schedules = this.store.getControl("schedules") || {};
     schedules[id] = {
       id,
@@ -138,6 +154,7 @@ export class FrameworkControlPlane {
       target,
       body,
       send_mode: sendMode,
+      ...(ownerSessionId == null ? {} : { owner_session_id: assertNonEmpty(ownerSessionId, "owner_session_id") }),
       ...(action === SCHEDULE_ACTIONS.SUBAGENT ? {
         ...(request.cwd == null ? {} : { cwd: assertNonEmpty(request.cwd, "cwd") }),
         ...(request.model == null ? {} : { model: assertNonEmpty(request.model, "model") }),
@@ -187,14 +204,14 @@ export class FrameworkControlPlane {
     const patchRequest = { ...request };
     if (request.session != null) {
       if (request.target != null) throw new Error("pass either session or target, not both");
-      if (request.action != null && request.action !== SCHEDULE_ACTIONS.NOTIFY) {
-        throw new Error("session target requires action notify");
+      if (request.action != null && ![SCHEDULE_ACTIONS.NOTIFY, SCHEDULE_ACTIONS.WAIT].includes(request.action)) {
+        throw new Error("session target requires action notify or wait");
       }
-      if (current.action !== SCHEDULE_ACTIONS.NOTIFY && request.action == null) {
-        throw new Error("session target requires action notify for subagent schedules");
+      if (![SCHEDULE_ACTIONS.NOTIFY, SCHEDULE_ACTIONS.WAIT].includes(current.action) && request.action == null) {
+        throw new Error("session target requires action notify or wait for subagent schedules");
       }
       patchRequest.target = this.resolveSessionTarget(request.session);
-      patchRequest.action = SCHEDULE_ACTIONS.NOTIFY;
+      patchRequest.action = request.action || SCHEDULE_ACTIONS.NOTIFY;
     }
     if (patchRequest.target != null) {
       patchRequest.action ??= current.action;
@@ -241,6 +258,70 @@ export class FrameworkControlPlane {
     return clone(schedules[id]);
   }
 
+  registerSubagent(request) {
+    const threadId = assertNonEmpty(request.thread_id, "thread_id");
+    const turnId = assertNonEmpty(request.turn_id, "turn_id");
+    const target = normalizeTargetScope(request.target);
+    const subagents = this.store.getControl("subagents") || {};
+    const existing = subagents[threadId];
+    if (existing) {
+      if (existing.turn_id !== turnId || JSON.stringify(existing.target) !== JSON.stringify(target)) {
+        throw new Error(`subagent thread is already registered with different identity: ${threadId}`);
+      }
+      return clone(existing);
+    }
+    subagents[threadId] = {
+      thread_id: threadId,
+      turn_id: turnId,
+      target,
+      prompt: assertNonEmpty(request.prompt, "prompt"),
+      state: "active",
+      created_at: request.created_at || new Date().toISOString(),
+      ...(request.owner_session_id == null ? {} : { owner_session_id: assertNonEmpty(request.owner_session_id, "owner_session_id") }),
+      ...(request.schedule_id == null ? {} : { schedule_id: assertNonEmpty(request.schedule_id, "schedule_id") }),
+      ...(request.occurrence_id == null ? {} : { occurrence_id: assertNonEmpty(request.occurrence_id, "occurrence_id") }),
+    };
+    this.store.putControl("subagents", subagents);
+    return clone(subagents[threadId]);
+  }
+
+  async closeSubagent(request) {
+    const threadId = assertNonEmpty(request.thread_id, "thread_id");
+    const subagents = this.store.getControl("subagents") || {};
+    const subagent = subagents[threadId];
+    if (!subagent) throw new Error(`subagent not found: ${threadId}`);
+    if (subagent.state === "closed") return clone(subagent);
+    if (!this.subagents
+      || typeof this.subagents.sessionStatus !== "function"
+      || typeof this.subagents.interruptSubagent !== "function"
+      || typeof this.subagents.archiveSubagent !== "function") {
+      throw new Error("subagent close requires daemon native close capabilities");
+    }
+    const target = {
+      ...subagent.target,
+      session_id: threadId,
+      thread_id: threadId,
+    };
+    let interrupted = false;
+    const status = await this.subagents.sessionStatus(target);
+    if (status?.state === "working") {
+      await this.subagents.interruptSubagent({ target, thread_id: threadId, turn_id: subagent.turn_id });
+      interrupted = true;
+    }
+    const archived = await this.subagents.archiveSubagent({ target, thread_id: threadId });
+    subagents[threadId] = {
+      ...subagent,
+      state: "closed",
+      closed_at: new Date().toISOString(),
+      close_evidence: {
+        interrupted,
+        archive_state: archived.state,
+      },
+    };
+    this.store.putControl("subagents", subagents);
+    return clone(subagents[threadId]);
+  }
+
   resolveSessionTarget(alias) {
     assertNonEmpty(alias, "session");
     const bindings = this.store.getControl("session_bindings") || {};
@@ -250,7 +331,13 @@ export class FrameworkControlPlane {
 }
 
 const TERMINAL_SCHEDULE_STATES = new Set(["cancelled", "stopped"]);
-const STOPPABLE_SCHEDULE_STATES = new Set(["configured", "enabled", "disabled", "deferred_while_working"]);
+const STOPPABLE_SCHEDULE_STATES = new Set([
+  "configured",
+  "enabled",
+  "disabled",
+  "deferred_while_working",
+  "send_pending",
+]);
 
 function isTerminalSchedule(schedule) {
   return TERMINAL_SCHEDULE_STATES.has(schedule.state);
@@ -270,6 +357,9 @@ function normalizeSchedulePatch(request, current) {
   const mode = request.mode ?? current.mode ?? SCHEDULE_MODES.ONCE;
   if (!Object.values(SCHEDULE_MODES).includes(mode)) throw new Error(`unsupported schedule mode: ${mode}`);
   if (request.mode != null) patch.mode = mode;
+  if (action === SCHEDULE_ACTIONS.WAIT && mode !== SCHEDULE_MODES.ONCE) {
+    throw new Error("wait schedules must be one-shot");
+  }
 
   if (request.at != null) {
     assertNonEmpty(request.at, "at");
@@ -277,6 +367,9 @@ function normalizeSchedulePatch(request, current) {
     patch.at = request.at;
   }
   if (request.body != null) patch.body = assertNonEmpty(request.body, "body");
+  if (request.owner_session_id != null) {
+    patch.owner_session_id = assertNonEmpty(request.owner_session_id, "owner_session_id");
+  }
   if (request.send_mode != null) {
     if (!Object.values(SEND_MODES).includes(request.send_mode)) throw new Error(`unsupported send mode: ${request.send_mode}`);
     patch.send_mode = request.send_mode;

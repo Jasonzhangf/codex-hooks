@@ -7,14 +7,21 @@ export const INSTALL_SCHEMA_VERSION = 1;
 export const INSTALL_DIRNAME = "routecodex-hooks";
 export const MANAGED_HOOK_ID = "rccs.stop.v1";
 
-export function installPaths({ codexHome = join(homedir(), ".codex"), binDir = join(homedir(), ".local", "bin") } = {}) {
+export function installPaths({
+  codexHome = join(homedir(), ".codex"),
+  binDir = join(homedir(), ".local", "bin"),
+  agentHome = join(homedir(), ".agent"),
+} = {}) {
   const home = resolve(codexHome);
+  const agent = resolve(agentHome);
   const installRoot = join(home, INSTALL_DIRNAME);
   return {
     codexHome: home,
+    agentHome: agent,
     installRoot,
     sourceDirectory: join(installRoot, "src"),
     hooksDirectory: join(installRoot, "hooks"),
+    bundledSkillsDirectory: join(installRoot, "skills"),
     configDirectory: join(installRoot, "config"),
     stateDirectory: join(installRoot, "state"),
     installRecord: join(installRoot, "install.json"),
@@ -22,6 +29,7 @@ export function installPaths({ codexHome = join(homedir(), ".codex"), binDir = j
     codexappTargets: join(installRoot, "config", "codexapp-targets.json"),
     hooksFile: join(home, "hooks.json"),
     skillsDirectory: join(home, "skills"),
+    agentSkillsDirectory: join(agent, "skills"),
     binDirectory: resolve(binDir),
     cliWrapper: join(resolve(binDir), "routecodex-hooks"),
     rccsWrapper: join(resolve(binDir), "rccs"),
@@ -41,10 +49,18 @@ export function readInstallRecord({ codexHome, installRecord } = {}) {
   }
 }
 
-export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "http://127.0.0.1:8787", stopHookEnabled = true, supervisorEnabled } = {}) {
+export function installFromSource({
+  sourceRoot,
+  codexHome,
+  binDir,
+  agentHome,
+  endpoint = "http://127.0.0.1:8787",
+  stopHookEnabled = true,
+  supervisorEnabled,
+} = {}) {
   if (typeof sourceRoot !== "string" || sourceRoot.trim() === "") throw new Error("source root is required");
   const source = resolve(sourceRoot);
-  const paths = installPaths({ codexHome, binDir });
+  const paths = installPaths({ codexHome, binDir, agentHome });
   const normalizedEndpoint = normalizeLoopbackEndpoint(endpoint);
   const previous = tryRead(paths.installRecord);
   const managedCommands = previous?.managed_hook_commands || [];
@@ -53,7 +69,9 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
   ensureDirectory(paths.installRoot);
   copyDirectory(join(source, "src"), paths.sourceDirectory);
   copyDirectory(join(source, "hooks"), paths.hooksDirectory);
+  copyDirectory(join(source, "skills"), paths.bundledSkillsDirectory);
   copyDirectory(join(source, "skills"), paths.skillsDirectory);
+  copyDirectory(join(source, "skills"), paths.agentSkillsDirectory);
   ensureDirectory(paths.configDirectory);
   ensureDirectory(paths.stateDirectory);
   writeJson(paths.codexappTargets, readJsonIfExists(previous?.codexapp_targets) || []);
@@ -79,7 +97,9 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
     source_root: source,
     install_root: paths.installRoot,
     source_directory: paths.sourceDirectory,
+    bundled_skills_directory: paths.bundledSkillsDirectory,
     skills_directory: paths.skillsDirectory,
+    agent_skills_directory: paths.agentSkillsDirectory,
     hooks_file: paths.hooksFile,
     daemon_config: paths.daemonConfig,
     codexapp_targets: paths.codexappTargets,
@@ -184,7 +204,19 @@ function entryHasCommand(entry, commands) {
 
 function copyDirectory(source, destination) {
   if (!fs.existsSync(source)) throw new Error(`source directory does not exist: ${source}`);
+  if (samePath(source, destination)) return;
   fs.cpSync(source, destination, { recursive: true, force: true });
+}
+
+function samePath(left, right) {
+  const resolvedLeft = resolve(left);
+  const resolvedRight = resolve(right);
+  if (resolvedLeft === resolvedRight) return true;
+  try {
+    return fs.realpathSync(resolvedLeft) === fs.realpathSync(resolvedRight);
+  } catch {
+    return false;
+  }
 }
 
 function wrapperSource(sourceDirectory, entry, installRecord) {

@@ -130,7 +130,17 @@
         ["configured", "stop", "stopped"],
         ["enabled", "stop", "stopped"],
         ["disabled", "stop", "stopped"],
-        ["deferred_while_working", "stop", "stopped"]
+        ["deferred_while_working", "stop", "stopped"],
+        ["send_pending", "stop", "stopped"]
+      ]
+    },
+    "subagent": {
+      "initial": "absent",
+      "states": ["absent", "active", "closed"],
+      "transitions": [
+        ["absent", "native_create_receipt", "active"],
+        ["active", "close", "closed"],
+        ["active", "close_error", "active"]
       ]
     },
     "operator": {

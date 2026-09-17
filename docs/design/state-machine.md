@@ -97,6 +97,24 @@ failed -> retryable -> send_pending (new attempt)
 future firing. It is distinct from reversible `disabled`, from terminal
 `cancelled`, and from a successful `sent` occurrence.
 
+## Subagent registry dimension
+
+Native subagent creation and close have separate evidence:
+
+```text
+absent -> active (native thread/turn receipt)
+active -> closed (native archive receipt)
+active -> active (close error, no simulated close)
+```
+
+`active` proves the native thread and turn identities were returned by
+`thread/start` and `turn/start`. Close reads native status, interrupts a
+working child first, and only the native `thread/archive` receipt advances the
+registry to `closed`. A close error leaves the record active and returns the
+failure explicitly. A failed registration after native creation preserves the
+receipt on the schedule record; it is not erased or reported as if no child
+existed.
+
 Operators are namespaced and independent:
 
 ```text

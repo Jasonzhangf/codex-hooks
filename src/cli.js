@@ -1,21 +1,34 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { McpStateClient } from "./mcp.js";
-import { readInstallRecord, setStopHookEnabled, writeInstallRecord } from "./install.js";
+import {
+  installFromSource,
+  readInstallRecord,
+  setStopHookEnabled,
+  writeInstallRecord,
+} from "./install.js";
 import { normalizeLoopbackEndpoint } from "./endpoint.js";
 
 const endpoint = process.env.ROUTECODEX_HOOKS_ENDPOINT || null;
 const argv = process.argv.slice(2);
 const [operation, ...args] = argv;
 
-if (operation === "status") {
+if (operation === "init") {
+  print({ initialized: true, ...initCommand(args) });
+} else if (operation === "status") {
   const record = readInstallRecord();
   print(await new McpStateClient(normalizeEndpoint(endpoint || record.endpoint)).queryStatus());
 } else if (operation === "session") {
   await sessionCommand(args);
 } else if (operation === "schedule") {
   await scheduleCommand(args);
+} else if (operation === "wait") {
+  await waitCommand(args);
+} else if (operation === "subagent") {
+  await subagentCommand(args);
 } else if (operation === "config") {
   configCommand(args);
 } else if (operation === "hook") {
@@ -112,6 +125,7 @@ async function scheduleCommand(args) {
       "--cwd",
       "--model",
       "--allow-concurrent",
+      "--owner-session",
     ]);
     if (options.once && options.every) throw new Error("--once and --every cannot be used together");
     const action = options.action || "notify";
@@ -130,6 +144,7 @@ async function scheduleCommand(args) {
       ...(options.cwd ? { cwd: options.cwd } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.allow_concurrent === true ? { allow_concurrent: true } : {}),
+      ...(ownerSessionId(options) ? { owner_session_id: ownerSessionId(options) } : {}),
     };
     if (options.session) request.session = options.session;
     else if (options.target) request.target = parseTargetIdentity(options.target);
@@ -138,8 +153,13 @@ async function scheduleCommand(args) {
     return;
   }
   if (subcommand === "list") {
+    const options = parseOptions(rest, ["--global", "--session"]);
+    if (options.global && options.session) throw new Error("--global and --session cannot be used together");
     const state = await queryControl();
-    const schedules = Object.values(state.state.schedules || {}).sort((left, right) => left.id.localeCompare(right.id));
+    const owner = options.global ? null : required(options.session || currentSessionId(), "current session; pass --session or --global");
+    const schedules = Object.values(state.state.schedules || {})
+      .filter((schedule) => owner == null || schedule.owner_session_id === owner)
+      .sort((left, right) => left.id.localeCompare(right.id));
     print(schedules);
     return;
   }
@@ -164,6 +184,7 @@ async function scheduleCommand(args) {
       "--cwd",
       "--model",
       "--allow-concurrent",
+      "--owner-session",
     ]);
     if (options.once && options.every) throw new Error("--once and --every cannot be used together");
     const mode = options.once ? "once" : options.every ? "interval" : undefined;
@@ -181,6 +202,7 @@ async function scheduleCommand(args) {
       ...(options.allow_concurrent === true ? { allow_concurrent: true } : {}),
       ...(options.session ? { session: options.session } : {}),
       ...(options.target ? { target: parseTargetIdentity(options.target) } : {}),
+      ...(ownerSessionId(options) ? { owner_session_id: ownerSessionId(options) } : {}),
     };
     await mutate(request);
     return;
@@ -191,6 +213,52 @@ async function scheduleCommand(args) {
     return;
   }
   throw new Error("usage: rccs schedule add|list|show|update|remove|pause|resume|stop ...");
+}
+
+async function waitCommand(args) {
+  const duration = required(args[0], "wait duration");
+  const remainder = args.slice(1);
+  const body = remainder[0] && !remainder[0].startsWith("--") ? remainder.shift() : "Wait elapsed. Continue the current task.";
+  const options = parseOptions(remainder, [
+    "--session",
+    "--async",
+    "--send-mode",
+    "--id",
+    "--timeout",
+    "--owner-session",
+  ]);
+  const session = options.session || await findCurrentSessionAlias();
+  const request = {
+    operation: options.async ? "wait.create" : "wait.block",
+    id: options.id || `wait-${Date.now()}-${process.pid}`,
+    at: parseWaitTime(duration),
+    body,
+    session: required(session, "current session alias; bind the session or pass --session"),
+    send_mode: options.send_mode || (options.async ? "idle_only" : "working_allowed"),
+    ...(ownerSessionId(options) ? { owner_session_id: ownerSessionId(options) } : {}),
+    ...(options.timeout ? { timeout_ms: parseDuration(options.timeout) } : {}),
+  };
+  await mutate(request);
+}
+
+async function subagentCommand(args) {
+  const [subcommand, ...rest] = args;
+  if (subcommand === "list") {
+    const options = parseOptions(rest, ["--global", "--session"]);
+    if (options.global && options.session) throw new Error("--global and --session cannot be used together");
+    const owner = options.global ? null : required(options.session || currentSessionId(), "current session; pass --session or --global");
+    const state = await queryControl();
+    const subagents = Object.values(state.state.subagents || {})
+      .filter((subagent) => owner == null || subagent.owner_session_id === owner)
+      .sort((left, right) => left.created_at.localeCompare(right.created_at));
+    print(subagents);
+    return;
+  }
+  if (subcommand === "close") {
+    await mutate({ operation: "subagent.close", thread_id: required(rest[0], "subagent thread id") });
+    return;
+  }
+  throw new Error("usage: rccs subagent list [--global|--session <session-id>] | rccs subagent close <thread-id>");
 }
 
 function configCommand(args) {
@@ -228,7 +296,61 @@ async function operatorCommand(args) {
 }
 
 function usage() {
-  return "usage: rccs status | rccs session bind|unbind ... | rccs schedule add|list|show|update|remove|pause|resume|stop ... | rccs config show|set ... | rccs hook enable|disable stop | rccs supervisor enable|disable | rccs operator enable|disable <name>";
+  return "usage: rccs init | rccs status | rccs session bind|unbind ... | rccs schedule add|list|show|update|remove|pause|resume|stop ... | rccs wait <duration> [body] [--async] | rccs subagent list|close ... | rccs config show|set ... | rccs hook enable|disable stop | rccs supervisor enable|disable | rccs operator enable|disable <name>";
+}
+
+function initCommand(args) {
+  const options = parseInitOptions(args);
+  const previous = tryReadInstallRecord();
+  const reusePrevious = !options.codexHome && !options.binDir && !options.agentHome;
+  const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  return installFromSource({
+    sourceRoot,
+    codexHome: options.codexHome ?? (reusePrevious && previous?.install_root ? dirname(previous.install_root) : undefined),
+    binDir: options.binDir ?? (reusePrevious ? previous?.bin_directory : undefined),
+    agentHome: options.agentHome ?? (reusePrevious && previous?.agent_skills_directory ? dirname(previous.agent_skills_directory) : undefined),
+    endpoint: options.endpoint ?? (reusePrevious ? previous?.endpoint : undefined) ?? "http://127.0.0.1:8787",
+    stopHookEnabled: options.stopHookEnabled ?? (reusePrevious ? previous?.stop_hook_enabled : undefined) ?? true,
+    supervisorEnabled: options.supervisorEnabled ?? (reusePrevious ? previous?.supervisor_enabled : undefined),
+  });
+}
+
+function parseInitOptions(args) {
+  const options = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const key = args[index];
+    if (["--endpoint", "--codex-home", "--bin-dir", "--agent-home"].includes(key)) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) throw new Error(`${key} requires a value`);
+      const option = {
+        "--endpoint": "endpoint",
+        "--codex-home": "codexHome",
+        "--bin-dir": "binDir",
+        "--agent-home": "agentHome",
+      }[key];
+      options[option] = value;
+      index += 1;
+      continue;
+    }
+    if (key === "--disable-stop-hook") {
+      options.stopHookEnabled = false;
+      continue;
+    }
+    if (key === "--enable-stop-hook") {
+      options.stopHookEnabled = true;
+      continue;
+    }
+    if (key === "--enable-supervisor") {
+      options.supervisorEnabled = true;
+      continue;
+    }
+    if (key === "--disable-supervisor") {
+      options.supervisorEnabled = false;
+      continue;
+    }
+    throw new Error(`unsupported init argument: ${key}`);
+  }
+  return options;
 }
 
 async function mutate(value) {
@@ -339,11 +461,12 @@ function resolveSessionTarget(daemon, options, sessionId) {
 
 function parseOptions(args, allowed) {
   const allowedSet = new Set(allowed);
+  const booleanOptions = new Set(["--replace", "--once", "--allow-concurrent", "--async", "--global"]);
   const options = {};
   for (let index = 0; index < args.length; index += 1) {
     const key = args[index];
     if (!allowedSet.has(key)) throw new Error(`unsupported option: ${key}`);
-    if (key === "--replace" || key === "--once" || key === "--allow-concurrent") {
+    if (booleanOptions.has(key)) {
       options[key.slice(2).replaceAll("-", "_")] = true;
       continue;
     }
@@ -362,6 +485,28 @@ function parseDuration(value) {
   const milliseconds = Number(match[1]) * multiplier;
   if (!Number.isSafeInteger(milliseconds)) throw new Error("--every duration is too large");
   return milliseconds;
+}
+
+function parseWaitTime(value) {
+  if (!Number.isNaN(Date.parse(value))) return new Date(value).toISOString();
+  return new Date(Date.now() + parseDuration(value)).toISOString();
+}
+
+function ownerSessionId(options = {}) {
+  return options.owner_session || currentSessionId();
+}
+
+function currentSessionId() {
+  return process.env.CODEX_SESSION_ID || process.env.CODEX_THREAD_ID || null;
+}
+
+async function findCurrentSessionAlias() {
+  const sessionId = currentSessionId();
+  if (!sessionId) return null;
+  const state = await queryControl();
+  const bindings = Object.values(state.state.session_bindings || {});
+  const match = bindings.find((binding) => binding.target?.thread_id === sessionId || binding.target?.session_id === sessionId);
+  return match?.alias || null;
 }
 
 function required(value, name) {

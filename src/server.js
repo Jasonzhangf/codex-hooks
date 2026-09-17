@@ -2,7 +2,7 @@ import http from "node:http";
 import { FrameworkControlPlane } from "./control.js";
 
 export class DaemonHttpServer {
-  constructor(daemon, { control = new FrameworkControlPlane({ store: daemon.store }) } = {}) {
+  constructor(daemon, { control = new FrameworkControlPlane({ store: daemon.store, subagents: daemon }) } = {}) {
     this.daemon = daemon;
     this.control = control;
     this.server = http.createServer((request, response) => this.handle(request, response));
@@ -41,7 +41,11 @@ export class DaemonHttpServer {
     if (request.method === "POST" && request.url === "/v1/control/mutate") {
       try {
         const body = await readJson(request);
-        this.writeJson(response, 200, { protocol: "routecodex-hooks/v1", result: this.control.mutate(body) });
+        let result = await this.control.mutate(body);
+        if (body.operation === "wait.block") {
+          result = await this.waitForSchedule(result.id, body.timeout_ms);
+        }
+        this.writeJson(response, 200, { protocol: "routecodex-hooks/v1", result });
       } catch (error) {
         this.writeJson(response, 400, { protocol: "routecodex-hooks/v1", error: error.message });
       }
@@ -74,6 +78,18 @@ export class DaemonHttpServer {
   writeJson(response, status, value) {
     response.writeHead(status, { "content-type": "application/json" });
     response.end(JSON.stringify(value));
+  }
+
+  async waitForSchedule(id, timeoutMs = null) {
+    const terminalStates = new Set(["sent", "completed", "failed", "unknown_delivery", "stopped", "cancelled", "session_missing"]);
+    const deadline = timeoutMs == null ? Infinity : Date.now() + timeoutMs;
+    while (true) {
+      const schedule = this.control.query().schedules?.[id];
+      if (!schedule) throw new Error(`schedule disappeared while waiting: ${id}`);
+      if (terminalStates.has(schedule.state)) return schedule;
+      if (Date.now() >= deadline) return { ...schedule, wait_timed_out: true };
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
   }
 }
 

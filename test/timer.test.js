@@ -301,6 +301,104 @@ test("subagent schedule invokes native create once and records thread and turn r
   assert.equal(persisted.last_delivery.turn_id, "turn-new");
 });
 
+test("subagent registration failure preserves the native thread and turn receipt", async () => {
+  const store = new MemoryStateStore();
+  const control = new FrameworkControlPlane({ store });
+  control.mutate({ operation: "operator.set_enabled", name: "timer", enabled: true });
+  control.mutate({
+    operation: "schedule.upsert",
+    id: "spawn-register-failure",
+    action: "subagent",
+    mode: "once",
+    at: "2026-09-11T10:00:00.000Z",
+    body: "run the task",
+    target: { namespace: "codex_tui", appserver_id: "tui-appserver", scope_id: "local:tui" },
+  });
+  const timer = new TimerOperator({
+    store,
+    clock: new ManualClock("2026-09-11T10:00:00.000Z"),
+    dispatch: async () => ({ decision: "sent" }),
+    createSubagent: async () => ({ thread_id: "thread-created", turn_id: "turn-created" }),
+    registerSubagent: async () => {
+      throw Object.assign(new Error("subagent registry unavailable"), { code: "registry_unavailable" });
+    },
+  });
+
+  const result = await timer.tick();
+  assert.equal(result[0].error.code, "registry_unavailable");
+  const persisted = store.getControl("schedules")["spawn-register-failure"];
+  assert.equal(persisted.state, "failed");
+  assert.equal(persisted.last_delivery.thread_id, "thread-created");
+  assert.equal(persisted.last_delivery.turn_id, "turn-created");
+  assert.equal(persisted.last_delivery.receipt.thread_id, "thread-created");
+});
+
+test("timer completion cannot overwrite an explicit stop with a sent state", async () => {
+  const store = new MemoryStateStore();
+  const control = new FrameworkControlPlane({ store });
+  control.mutate({ operation: "operator.set_enabled", name: "timer", enabled: true });
+  control.mutate({
+    operation: "schedule.upsert",
+    id: "stop-during-send",
+    at: "2026-09-11T10:00:00.000Z",
+    body: "wake",
+    target: TARGET,
+  });
+  const timer = new TimerOperator({
+    store,
+    clock: new ManualClock("2026-09-11T10:00:00.000Z"),
+    dispatch: async () => {
+      control.mutate({ operation: "schedule.stop", id: "stop-during-send" });
+      return { decision: "sent", delivery: { state: "accepted", intent_id: "timer:stop-during-send:2026-09-11T10:00:00.000Z" } };
+    },
+  });
+
+  await timer.tick();
+  const persisted = store.getControl("schedules")["stop-during-send"];
+  assert.equal(persisted.state, "stopped");
+  assert.equal(persisted.enabled, false);
+  assert.equal(persisted.last_delivery.state, "accepted");
+});
+
+test("wait schedule uses the same deferred delivery lifecycle and is one-shot", async () => {
+  const store = new MemoryStateStore();
+  const codexapp = app("working");
+  const daemon = new HooksDaemon({ codexapp, store });
+  const control = new FrameworkControlPlane({ store });
+  control.mutate({ operation: "operator.set_enabled", name: "timer", enabled: true });
+  control.mutate({ operation: "session.bind", alias: "owner", target: TARGET });
+  const wait = control.mutate({
+    operation: "wait.create",
+    id: "wait-once",
+    at: "2026-09-11T10:00:00.000Z",
+    body: "wait elapsed",
+    session: "owner",
+    owner_session_id: "session-1",
+  });
+  assert.equal(wait.action, "wait");
+  assert.equal(wait.mode, "once");
+  assert.equal(wait.owner_session_id, "session-1");
+
+  const timer = new TimerOperator({
+    store,
+    clock: new ManualClock("2026-09-11T10:00:00.000Z"),
+    dispatch: (intent) => daemon.dispatchIntent(intent, { kind: "timer" }),
+    resume: (target) => daemon.flushPending(target),
+  });
+  const deferred = await timer.tick();
+  assert.equal(deferred.find((entry) => entry.schedule_id === "wait-once").result.decision, "deferred");
+  assert.equal(store.getControl("schedules")["wait-once"].state, "deferred_while_working");
+
+  codexapp.state = "idle";
+  const resumed = await timer.tick();
+  assert.equal(resumed.find((entry) => entry.schedule_id === "wait-once").result.sent.length, 1);
+  assert.equal(store.getControl("schedules")["wait-once"].state, "sent");
+  assert.equal(store.getControl("schedules")["wait-once"].enabled, false);
+  assert.equal(codexapp.sends.length, 1);
+  assert.deepEqual(await timer.tick(), []);
+  assert.equal(codexapp.sends.length, 1);
+});
+
 test("recurring subagent schedules require explicit concurrency consent", () => {
   const store = new MemoryStateStore();
   const control = new FrameworkControlPlane({ store });

@@ -9,6 +9,7 @@ const record = installFromSource({
   sourceRoot: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
   codexHome: options.codexHome,
   binDir: options.binDir,
+  agentHome: options.agentHome,
   endpoint: options.endpoint,
   stopHookEnabled: options.stopHookEnabled,
   supervisorEnabled: options.supervisorEnabled,
@@ -19,10 +20,15 @@ function parseArgs(args) {
   const options = { stopHookEnabled: true };
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index];
-    if (["--endpoint", "--codex-home", "--bin-dir"].includes(value)) {
+    if (["--endpoint", "--codex-home", "--bin-dir", "--agent-home"].includes(value)) {
       const next = args[index + 1];
       if (!next || next.startsWith("--")) throw new Error(`${value} requires a value`);
-      const key = { "--endpoint": "endpoint", "--codex-home": "codexHome", "--bin-dir": "binDir" }[value];
+      const key = {
+        "--endpoint": "endpoint",
+        "--codex-home": "codexHome",
+        "--bin-dir": "binDir",
+        "--agent-home": "agentHome",
+      }[value];
       options[key] = next;
       index += 1;
     } else if (value === "--disable-stop-hook") {

@@ -198,6 +198,24 @@ test("schedule stop is terminal and preserves the record without claiming delive
   assert.throws(() => control.mutate({ operation: "schedule.update", id: "stop-me", body: "after" }), /schedule is terminal/);
 });
 
+test("schedule stop is accepted while an occurrence is being sent", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  control.mutate({
+    operation: "schedule.upsert",
+    id: "stop-inflight",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "wake",
+    target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" },
+  });
+  const schedules = daemon.store.getControl("schedules");
+  schedules["stop-inflight"] = { ...schedules["stop-inflight"], state: "send_pending" };
+  daemon.store.putControl("schedules", schedules);
+  const stopped = control.mutate({ operation: "schedule.stop", id: "stop-inflight" });
+  assert.equal(stopped.state, "stopped");
+  assert.equal(stopped.enabled, false);
+});
+
 test("schedule stop is rejected after delivery evidence exists", () => {
   const daemon = new HooksDaemon({ codexapp: codexapp() });
   const control = new FrameworkControlPlane({ store: daemon.store });
@@ -344,4 +362,94 @@ test("control plane validates schedule action, interval, and target shape", () =
   assert.equal(subagent.action, "subagent");
   assert.equal(subagent.session, undefined);
   assert.deepEqual(subagent.target, { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" });
+});
+
+test("wait is one-shot, session-bound, and owned by the requesting session", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  const target = {
+    namespace: "codex_tui",
+    appserver_id: "app",
+    session_id: "session-1",
+    thread_id: "thread-1",
+  };
+  control.mutate({ operation: "session.bind", alias: "owner", target });
+  const wait = control.mutate({
+    operation: "wait.create",
+    id: "wait-1",
+    at: "2026-09-16T12:01:00.000Z",
+    body: "continue",
+    session: "owner",
+    owner_session_id: "session-1",
+  });
+  assert.equal(wait.action, "wait");
+  assert.equal(wait.mode, "once");
+  assert.equal(wait.owner_session_id, "session-1");
+  assert.equal(control.query().operators.timer.enabled, true);
+  assert.throws(
+    () => control.mutate({ operation: "wait.create", id: "wait-2", mode: "interval", interval_ms: 1000, at: "2026-09-16T12:01:00.000Z", body: "continue", session: "owner" }),
+    /wait schedules must be one-shot/,
+  );
+});
+
+test("subagent close interrupts a working turn before archiving", async () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const calls = [];
+  const subagents = {
+    async sessionStatus() { calls.push(["status"]); return { state: "working" }; },
+    async interruptSubagent(request) { calls.push(["interrupt", request]); return { state: "interrupted" }; },
+    async archiveSubagent(request) { calls.push(["archive", request]); return { state: "archived" }; },
+  };
+  const control = new FrameworkControlPlane({ store: daemon.store, subagents });
+  const target = { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" };
+  control.registerSubagent({
+    thread_id: "thread-child",
+    turn_id: "turn-child",
+    target,
+    prompt: "review",
+    owner_session_id: "session-owner",
+  });
+  const closed = await control.mutate({ operation: "subagent.close", thread_id: "thread-child" });
+  assert.equal(closed.state, "closed");
+  assert.equal(closed.close_evidence.interrupted, true);
+  assert.equal(closed.close_evidence.archive_state, "archived");
+  assert.deepEqual(calls.map(([name]) => name), ["status", "interrupt", "archive"]);
+  assert.equal(calls[1][1].turn_id, "turn-child");
+  assert.equal((await control.mutate({ operation: "subagent.close", thread_id: "thread-child" })).state, "closed");
+  assert.equal(calls.length, 3);
+});
+
+test("subagent close archives an idle subagent without interrupt", async () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const calls = [];
+  const subagents = {
+    async sessionStatus() { calls.push("status"); return { state: "idle" }; },
+    async interruptSubagent() { calls.push("interrupt"); return { state: "interrupted" }; },
+    async archiveSubagent() { calls.push("archive"); return { state: "archived" }; },
+  };
+  const control = new FrameworkControlPlane({ store: daemon.store, subagents });
+  control.registerSubagent({
+    thread_id: "thread-idle",
+    turn_id: "turn-idle",
+    target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" },
+    prompt: "review",
+  });
+  const closed = await control.mutate({ operation: "subagent.close", thread_id: "thread-idle" });
+  assert.equal(closed.close_evidence.interrupted, false);
+  assert.deepEqual(calls, ["status", "archive"]);
+});
+
+test("subagent close fails explicitly when native close capability is unavailable", async () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  control.registerSubagent({
+    thread_id: "thread-no-close",
+    turn_id: "turn-no-close",
+    target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" },
+    prompt: "review",
+  });
+  await assert.rejects(
+    () => control.mutate({ operation: "subagent.close", thread_id: "thread-no-close" }),
+    /requires daemon native close capabilities/,
+  );
 });

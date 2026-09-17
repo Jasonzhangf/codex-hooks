@@ -1,6 +1,6 @@
 ---
 name: scheduling
-description: Use rccs to bind sessions and create one-shot or recurring notifications or subagent schedules.
+description: Use rccs to bind sessions, wait without polling, and create one-shot or recurring notifications or subagent schedules.
 ---
 
 The scheduling skill teaches `rccs` schedule operations. Runtime schedule
@@ -38,3 +38,21 @@ rccs schedule add subagent-1 <at-iso8601> '<prompt>' \
 Recurring subagent schedules require explicit `--allow-concurrent`. The receipt
 records the created thread and turn identities; no tmux text is used as a
 substitute for native creation.
+
+Do not poll inside an agent for waits of one minute or more. Register a
+one-shot daemon wait instead:
+
+```sh
+rccs wait 5m 'continue the task' --session timer-tui
+rccs wait 30m 'recheck the task' --session timer-tui --async
+```
+
+The default wait blocks in the CLI until the daemon reaches a terminal delivery
+state. `--async` returns after registration and wakes the session at the
+deadline. `schedule list` defaults to the current session; use `--global` for
+all schedules.
+
+Use `rccs subagent list` and `rccs subagent list --global` to inspect spawned
+children. Close one only through `rccs subagent close <thread-id>`; the daemon
+checks native status, interrupts a working turn, archives the thread, and
+records the result.

@@ -341,6 +341,48 @@ test("internal codexapp creates a native subagent through thread/start and turn/
   }
 });
 
+test("internal codexapp interrupts and archives a native subagent thread", async () => {
+  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-subagent-close-"));
+  const appserverSocket = join(root, "appserver.sock");
+  const controlSocket = join(root, "codexapp.sock");
+  const calls = [];
+  const native = await startNativeFixture(appserverSocket, calls);
+  const codexapp = spawn(process.execPath, [
+    "src/codexapp-entry.js",
+    "--socket", controlSocket,
+    "--targets-file", join(root, "targets.json"),
+  ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await readLine(codexapp.stdout);
+    await control(controlSocket, "register_target", {
+      scope_id: "local:test",
+      appserver_id: "test-appserver",
+      namespace: "codex_tui",
+      endpoint: `unix://${appserverSocket}`,
+    });
+    const interrupted = await control(controlSocket, "interrupt_turn", {
+      address: { scopeId: "local:test", sessionId: "thread-child" },
+      threadId: "thread-child",
+      turnId: "turn-child",
+    });
+    assert.equal(interrupted.state, "interrupted");
+    const archived = await control(controlSocket, "archive_thread", {
+      address: { scopeId: "local:test", sessionId: "thread-child" },
+      threadId: "thread-child",
+    });
+    assert.equal(archived.state, "archived");
+    assert.deepEqual(calls.filter(([method]) => method === "turn/interrupt" || method === "thread/archive"), [
+      ["turn/interrupt", { threadId: "thread-child", turnId: "turn-child" }],
+      ["thread/archive", { threadId: "thread-child" }],
+    ]);
+  } finally {
+    codexapp.kill("SIGTERM");
+    await once(codexapp, "exit");
+    await new Promise((resolve) => native.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function control(socketPath, method, params = {}) {
   const response = await new Promise((resolve, reject) => {
     const socket = net.createConnection(socketPath);
@@ -400,6 +442,8 @@ async function startNativeFixture(socketPath, calls, options = {}) {
         else if (request.method === "thread/queue/add") response = { result: options.queueResult || { accepted: true } };
         else if (request.method === "thread/start") response = { result: options.threadStartResult || { thread: { id: "thread-new", status: { type: "idle" } } } };
         else if (request.method === "turn/start") response = { result: options.turnStartResult || { turn: { id: "turn-new", status: "inProgress" } } };
+        else if (request.method === "turn/interrupt") response = { result: {} };
+        else if (request.method === "thread/archive") response = { result: {} };
         else response = { error: { code: -32601, message: `unsupported ${request.method}` } };
         socket.write(encodeFrame(JSON.stringify({ id: request.id, ...response })));
       }

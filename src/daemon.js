@@ -1,5 +1,6 @@
 import {
   DELIVERY_STATES,
+  SEND_OPERATIONS,
   SEND_MODES,
   DEFERRED_SESSION_STATES,
   FAIL_CLOSED_SESSION_STATES,
@@ -8,6 +9,7 @@ import {
   classifyHook,
   clone,
   eventKey,
+  interruptSuppressionKey,
   normalizeHookEvent,
   normalizeIntent,
   normalizeSessionObservation,
@@ -139,13 +141,31 @@ export class HooksDaemon {
     return this.codexapp.interrupt_turn(request);
   }
 
-  async archiveSubagent(request) {
-    if (typeof this.codexapp.archive_thread !== "function") {
-      throw Object.assign(new Error("codexapp does not provide thread archiving"), {
-        code: "subagent_archive_capability_missing",
+  async steerMessage(request) {
+    if (typeof this.codexapp.steer_message !== "function") {
+      throw Object.assign(new Error("codexapp does not provide message steering"), {
+        code: "steer_capability_missing",
       });
     }
-    return this.codexapp.archive_thread(request);
+    return this.codexapp.steer_message(request);
+  }
+
+  async deliveryEvidence(request) {
+    if (typeof this.codexapp.delivery_evidence !== "function") {
+      const error = new Error("codexapp does not provide delivery evidence");
+      error.code = "delivery_evidence_unavailable";
+      throw error;
+    }
+    return this.codexapp.delivery_evidence(request);
+  }
+
+  async readSubagentResult(request) {
+    if (typeof this.codexapp.read_subagent_result !== "function") {
+      throw Object.assign(new Error("codexapp does not provide subagent result reads"), {
+        code: "read_subagent_result_capability_missing",
+      });
+    }
+    return this.codexapp.read_subagent_result(request);
   }
 
   async processHook(event, hookKind, key, rawIntent) {
@@ -153,6 +173,9 @@ export class HooksDaemon {
       const result = this.result(event, hookKind, "guarded", { delivery: null, guard: "stop_hook_active" });
       this.store.putEvent(key, result);
       return result;
+    }
+    if (hookKind === "lifecycle" && event.hook_event_name === "Interrupt") {
+      this.recordInterrupt(event);
     }
     const generatedIntent = rawIntent || (this.intentFactory ? await this.intentFactory(event, hookKind) : null);
     if (!generatedIntent) {
@@ -165,6 +188,21 @@ export class HooksDaemon {
     const result = await this.dispatch(event, hookKind, intent);
     this.store.putEvent(key, result);
     return result;
+  }
+
+  recordInterrupt(event) {
+    const suppressionKey = interruptSuppressionKey(event.session_id, event.turn_id);
+    const suppressions = this.store.getControl("stop_suppression") || {};
+    suppressions[suppressionKey] = {
+      session_id: event.session_id,
+      turn_id: event.turn_id || null,
+      hook_event_name: event.hook_event_name,
+      reason: event.reason || null,
+      source: event.source || null,
+      observed_at: this.now(),
+    };
+    this.store.putControl("stop_suppression", suppressions);
+    return clone(suppressions[suppressionKey]);
   }
 
   async dispatch(event, hookKind, intent) {
@@ -223,6 +261,14 @@ export class HooksDaemon {
       return this.fail(event, hookKind, intent, "session_not_sendable", state);
     }
 
+    if (intent.operation === SEND_OPERATIONS.STEER) {
+      if (state !== "working" || !intent.turn_id || observation.active_turn_id !== intent.turn_id) {
+        return this.fail(event, hookKind, intent, "steer_requires_live_working_turn", state);
+      }
+    }
+    if (intent.operation === SEND_OPERATIONS.INTERRUPT) {
+      return this.fail(event, hookKind, intent, "interrupt_is_explicit_stop_only", state);
+    }
     return this.send(event, hookKind, intent, state);
   }
 
@@ -350,6 +396,17 @@ export class HooksDaemon {
     return this.#recordDeliveryEvidence(intentId, DELIVERY_EVIDENCE_NEXT[existing.state], evidence);
   }
 
+  async reconcileNextDelivery() {
+    const pending = this.store.listIntents
+      ? this.store.listIntents()
+      : [...this.store.intents.values()].map(clone);
+    const next = pending
+      .filter((record) => DELIVERY_EVIDENCE_NEXT[record.state])
+      .sort((left, right) => String(left.evidence?.at || "").localeCompare(String(right.evidence?.at || "")))[0];
+    if (!next) return null;
+    return this.reconcileDeliveryEvidence(next.intent_id);
+  }
+
   async send(event, hookKind, intent, state, attemptId = intent.intent_id) {
     const emitted = this.transition(intent, DELIVERY.EMITTED, { state, attempt_id: attemptId, at: this.now() });
     // Reserve the durable outbox record before crossing the transport
@@ -359,7 +416,14 @@ export class HooksDaemon {
     const sending = this.transition(emitted, DELIVERY.SENDING, { state, attempt_id: attemptId, at: this.now() });
     this.rememberIntent(intent, sending, "sending");
     try {
-      const native = await this.codexapp.send_message({ target: intent.target, body: intent.body, attempt_id: attemptId });
+      const native = intent.operation === SEND_OPERATIONS.STEER
+        ? await this.steerMessage({
+          target: intent.target,
+          body: intent.body,
+          attempt_id: attemptId,
+          turn_id: intent.turn_id,
+        })
+        : await this.codexapp.send_message({ target: intent.target, body: intent.body, attempt_id: attemptId });
       assertAcceptedReceipt(native, attemptId);
       const accepted = this.transition({ ...sending, native }, DELIVERY.ACCEPTED, { state, attempt_id: attemptId, native, at: this.now() });
       this.rememberIntent(intent, accepted, "sent");
@@ -541,7 +605,7 @@ function sameTarget(left, right) {
 }
 
 function assertSameIntent(left, right) {
-  if (!left || left.intent_id !== right.intent_id || left.source !== right.source || left.body !== right.body || left.send_mode !== right.send_mode || !sameTarget(left.target, right.target) || left.event_key !== right.event_key) {
+    if (!left || left.intent_id !== right.intent_id || left.source !== right.source || left.body !== right.body || left.send_mode !== right.send_mode || left.operation !== right.operation || left.turn_id !== right.turn_id || !sameTarget(left.target, right.target) || left.event_key !== right.event_key) {
     const error = new Error(`intent_id already used with different intent: ${right.intent_id}`);
     error.code = "intent_id_conflict";
     throw error;

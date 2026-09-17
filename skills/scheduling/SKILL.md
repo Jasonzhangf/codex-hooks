@@ -37,7 +37,9 @@ rccs schedule add subagent-1 <at-iso8601> '<prompt>' \
 
 Recurring subagent schedules require explicit `--allow-concurrent`. The receipt
 records the created thread and turn identities; no tmux text is used as a
-substitute for native creation.
+substitute for native creation. `--model` and `--effort` are forwarded to the
+native child. `--profile` is rejected explicitly because the current App Server
+`thread/start` boundary has no Codex configuration-profile selector.
 
 Do not poll inside an agent for waits of one minute or more. Register a
 one-shot daemon wait instead:
@@ -53,6 +55,24 @@ deadline. `schedule list` defaults to the current session; use `--global` for
 all schedules.
 
 Use `rccs subagent list` and `rccs subagent list --global` to inspect spawned
-children. Close one only through `rccs subagent close <thread-id>`; the daemon
-checks native status, interrupts a working turn, archives the thread, and
-records the result.
+children. Stop one only through `rccs subagent stop <thread-id>`; the daemon
+checks native status and sends `turn/interrupt` with the registered
+`thread_id` and `turn_id` when a turn is working. An idle child records
+`no_active_turn`; an ephemeral child becomes `released`, otherwise it becomes
+`stopped`. Archive, delete, and close are not part of this path.
+
+For recurring goal inspection, register LongHorizon instead of keeping an
+agent-side polling loop:
+
+```sh
+rccs longhorizon register check --mode periodic --prompt 'Inspect the goal document and continue.' \
+  --session timer-tui --every 5m
+rccs longhorizon activate check
+rccs longhorizon stop check
+```
+
+`periodic` uses `busy_policy=skip`: a busy target skips the occurrence and the
+next interval is the next opportunity. For a Stop-triggered review, register
+`--mode goal --goal-file <path> --session <alias>` and activate it. Goal review
+is disabled until activation and can be paused or stopped with the same
+LongHorizon commands.

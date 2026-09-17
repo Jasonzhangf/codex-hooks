@@ -25,9 +25,16 @@ function intent(id, mode = SEND_MODES.WORKING_ALLOWED) {
 function fakeCodexapp(state = "idle") {
   return {
     state,
+    activeTurnId: null,
     statusCalls: 0,
     sends: [],
-    async session_status() { this.statusCalls += 1; return { state: this.state }; },
+    async session_status() {
+      this.statusCalls += 1;
+      return {
+        state: this.state,
+        ...(this.activeTurnId == null ? {} : { active_turn_id: this.activeTurnId }),
+      };
+    },
     async send_message(input) { this.sends.push(input); return { accepted: true, attempt_id: input.attempt_id }; },
     async delivery_evidence({ attempt_id }) { return { attempt_id, target_receipt: { clientId: attempt_id }, source: "test.codexapp" }; },
   };
@@ -246,6 +253,73 @@ test("working_allowed sends while working, while unknown and disconnected fail c
   const disconnected = await daemon.handleHook(event("PostToolUse", { turn_id: "turn-3", tool_use_id: "tool-3" }), { intent: intent("disconnected-1") });
   assert.equal(disconnected.decision, "fail_closed");
   assert.equal(codexapp.sends.length, 1);
+});
+
+test("send operation queue uses queue while steer requires a live matching turn", async () => {
+  const codexapp = fakeCodexapp("working");
+  codexapp.activeTurnId = "turn-live";
+  codexapp.steers = [];
+  codexapp.steer_message = async (input) => {
+    codexapp.steers.push(input);
+    return { accepted: true, attempt_id: input.attempt_id };
+  };
+  const daemon = new HooksDaemon({ codexapp });
+  const queued = await daemon.handleHook(event("Stop", { event_id: "queue-operation" }), {
+    intent: { ...intent("queue-operation"), operation: "queue" },
+  });
+  assert.equal(queued.decision, "sent");
+  assert.equal(codexapp.sends.length, 1);
+  assert.equal(codexapp.steers.length, 0);
+
+  const steered = await daemon.handleHook(event("Stop", { event_id: "steer-operation", turn_id: "turn-live" }), {
+    intent: { ...intent("steer-operation"), operation: "steer", turn_id: "turn-live" },
+  });
+  assert.equal(steered.decision, "sent");
+  assert.equal(codexapp.steers.length, 1);
+  assert.equal(codexapp.steers[0].turn_id, "turn-live");
+
+  const stale = await daemon.handleHook(event("Stop", { event_id: "steer-stale", turn_id: "turn-live" }), {
+    intent: { ...intent("steer-stale"), operation: "steer", turn_id: "turn-stale" },
+  });
+  assert.equal(stale.decision, "fail_closed");
+  assert.equal(stale.error.code, "steer_requires_live_working_turn");
+  assert.equal(codexapp.steers.length, 1);
+});
+
+test("interrupt is rejected as an ordinary message operation", async () => {
+  const codexapp = fakeCodexapp("working");
+  const daemon = new HooksDaemon({ codexapp });
+  const result = await daemon.handleHook(event("Stop", { event_id: "interrupt-operation", turn_id: "turn-live" }), {
+    intent: { ...intent("interrupt-operation"), operation: "interrupt", turn_id: "turn-live" },
+  });
+  assert.equal(result.decision, "fail_closed");
+  assert.equal(result.error.code, "interrupt_is_explicit_stop_only");
+  assert.equal(codexapp.sends.length, 0);
+});
+
+test("Interrupt lifecycle records one suppressible source turn without sending", async () => {
+  const codexapp = fakeCodexapp("idle");
+  const daemon = new HooksDaemon({ codexapp });
+  const result = await daemon.handleHook(event("Interrupt", { event_id: "interrupt-1", reason: "user_interrupt" }));
+  assert.equal(result.decision, "observed");
+  assert.equal(result.delivery, null);
+  assert.equal(codexapp.sends.length, 0);
+  const suppression = daemon.store.getControl("stop_suppression")["session-1:turn-1"];
+  assert.equal(suppression.session_id, "session-1");
+  assert.equal(suppression.turn_id, "turn-1");
+  assert.equal(suppression.reason, "user_interrupt");
+});
+
+test("daemon exposes a typed read_subagent_result capability failure", async () => {
+  const daemon = new HooksDaemon({ codexapp: fakeCodexapp("idle") });
+  await assert.rejects(
+    () => daemon.readSubagentResult({
+      target: target(),
+      thread_id: "reviewer-thread",
+      turn_id: "reviewer-turn",
+    }),
+    (error) => error.code === "read_subagent_result_capability_missing",
+  );
 });
 
 test("waiting_for_input and stopped are send-eligible while starting remains deferred", async () => {

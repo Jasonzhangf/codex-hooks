@@ -1,7 +1,9 @@
 # RCCS Framework Lifecycle
 
-Status: implemented schedule foundation; interception and request-augmentation
-planes are design-only until their own gates close.
+Status: Stage 2 implementation surface. Schedule, delivery, subagent
+create/list/stop, Stopless goal review, and LongHorizon registration/control
+are implemented. Tool-call policy and request augmentation remain separate
+boundaries and are not claimed as implemented here.
 
 This document is the lifecycle contract for the independent `rccs` CLI and the
 hooks framework. It separates the planes by ownership and evidence, so no
@@ -14,10 +16,10 @@ payload-based control channel.
 | --- | --- | --- |
 | Delivery | `hooksd` `MessageIntent` state, CodexApp send gate | implemented |
 | Schedule | `hooksd` persisted schedule state and daemon clock | implemented |
-| Stop interception | official Stop hook + Stop policy | contract-first |
+| Stop interception | official Stop hook + goal-review policy | implemented |
 | Tool-call interception | official PreToolUse / PermissionRequest / PostToolUse adapters | contract-only |
 | Request augmentation | provider request assembly boundary | design-only |
-| Subagent creation and close | CodexApp `thread/start`, `turn/start`, `turn/interrupt`, `thread/archive` | implemented, profile snapshot pending |
+| Subagent creation and stop | CodexApp `thread/start`, `turn/start`, `turn/interrupt` | implemented |
 
 `rccs` is the only authorized mutation surface. MCP remains read-only.
 Official hooks validate and adapt events; they do not own policy state.
@@ -99,7 +101,8 @@ rccs schedule stop <id>
 rccs schedule remove <id>
 rccs wait <duration> [body] [--async] [--session <alias>]
 rccs subagent list [--global|--session <session-id>]
-rccs subagent close <thread-id>
+rccs subagent show <thread-id>
+rccs subagent stop <thread-id>
 ```
 
 `schedule list` and `subagent list` default to the current session inferred
@@ -145,19 +148,19 @@ Every scheduled notification checks the target before dispatch:
 - the target must still exist before every send, so a dead session is not
   repeatedly notified.
 
-Subagent schedules use native `thread/start` and `turn/start`. The default
-profile is the current effective Codex profile, parsed once at startup and
-reused as a snapshot for subsequent spawns. Explicit profile, model, and
-effort overrides may replace that snapshot without changing the caller's
+Subagent schedules use native `thread/start` and `turn/start`. This native
+boundary does not expose a Codex configuration-profile selector, so an
+explicit `--profile` is rejected rather than accepted and discarded. Explicit
+`model` and `effort` overrides may be applied without changing the caller's
 runtime state. Spawned subagents never inherit the caller's conversation
-context; they receive only the typed prompt, target scope, profile snapshot,
-and explicit override fields.
+context; they receive only the typed prompt, target scope, and explicit
+override fields.
 
-`rccs subagent close` reads the native session state first. A working child is
-interrupted through `turn/interrupt`, then every child is archived through
-`thread/archive`. The registry record advances to `closed` only after the
-native archive receipt is present. A missing interrupt or archive capability is
-an explicit failure, not a simulated close.
+`rccs subagent stop` reads the native session state first. A working child is
+interrupted through `turn/interrupt` with its registered `thread_id` and
+`turn_id`; an idle child records `no_active_turn`. Ephemeral children become
+`released`, other children become `stopped`. Archive, delete, and close are
+not part of the implemented surface.
 
 ## 5. LongHorizon modes
 

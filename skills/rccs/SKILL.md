@@ -65,13 +65,42 @@ rccs schedule add review 2026-09-16T12:00:00Z 'review the candidate' \
   --action subagent --target codex_tui/tui-appserver
 rccs subagent list
 rccs subagent list --global
-rccs subagent close <thread-id>
+rccs subagent show <thread-id>
+rccs subagent stop <thread-id>
 ```
 
-Recurring subagent creation requires `--allow-concurrent`. `subagent close`
-reads native status first, interrupts a working turn, archives the thread, and
-records the close evidence. Never claim closure from an accepted request alone;
-inspect the returned state.
+Recurring subagent creation requires `--allow-concurrent`. `subagent stop`
+reads native status first and, for a working turn, sends `turn/interrupt` with
+the recorded `thread_id` and `turn_id`. An idle child records
+`no_active_turn`; an ephemeral child becomes `released`, otherwise it becomes
+`stopped`. Archive, delete, and close are not part of the command surface.
+Never claim stop from an accepted request alone; inspect the returned state
+and stop evidence.
+
+`--model` and `--effort` are passed to the native child when supplied.
+`--profile` is rejected explicitly because this App Server `thread/start`
+boundary has no Codex configuration-profile selector; do not retry it as a
+silent fallback.
+
+## LongHorizon
+
+LongHorizon is registered paused and requires explicit activation:
+
+```sh
+rccs longhorizon register review --mode goal --goal-file /path/goal.md --session work
+rccs longhorizon activate review
+rccs longhorizon list
+rccs longhorizon show review
+rccs longhorizon pause review
+rccs longhorizon stop review
+```
+
+`periodic` mode owns a paused recurring schedule with `busy_policy=skip`.
+`goal` mode enables Stopless goal review: an eligible Stop event creates one
+isolated ephemeral reviewer, validates its structured report, and sends one
+feedback intent only when a gap and next action are present. User interrupts
+and `stop_hook_active` suppress review. Reviewer/network/schema failures are
+recorded as unresolved or failed and do not block the original Stop.
 
 ## Stop conditions
 

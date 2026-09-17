@@ -35,6 +35,20 @@ test("MCP reads control state and CLI-shaped mutation is visible through the sam
   }
 });
 
+test("control state projects delivery intents without exposing transition history", async () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  daemon.store.putIntent("intent-1", {
+    intent_id: "intent-1",
+    state: "unknown_delivery",
+    target: { session_id: "session-1", thread_id: "thread-1" },
+    intent: { intent_id: "intent-1", body: "wake" },
+  });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  assert.deepEqual(Object.keys(control.query().delivery_intents), ["intent-1"]);
+  assert.equal(control.query().delivery_intents["intent-1"].state, "unknown_delivery");
+  assert.equal(control.query().transitions, undefined);
+});
+
 test("JSON state store survives a new daemon process boundary", async () => {
   const directory = await mkdtemp(join(tmpdir(), "codex-hooks-"));
   const filePath = join(directory, "state.json");
@@ -56,13 +70,14 @@ test("control plane rejects unknown mutation instead of silently accepting it", 
   assert.throws(() => control.mutate({ operation: "timer.tick" }), /unsupported control operation/);
 });
 
-test("control plane cannot enable an operator without an implementation", () => {
+test("control plane cannot enable an operator outside the implemented registry", () => {
   const daemon = new HooksDaemon({ codexapp: codexapp() });
   const control = new FrameworkControlPlane({ store: daemon.store });
   assert.throws(
-    () => control.mutate({ operation: "operator.set_enabled", name: "stopless", enabled: true }),
-    /operator is not implemented: stopless/,
+    () => control.mutate({ operation: "operator.set_enabled", name: "memory", enabled: true }),
+    /operator is not implemented: memory/,
   );
+  assert.equal(control.mutate({ operation: "operator.set_enabled", name: "stopless", enabled: true }).enabled, true);
 });
 
 test("schedule mutation validates its target and send mode at the control boundary", () => {
@@ -76,6 +91,26 @@ test("schedule mutation validates its target and send mode at the control bounda
     () => control.mutate({ operation: "schedule.upsert", id: "bad-mode", at: "2026-09-10T12:00:00Z", body: "wake", target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" }, send_mode: "always" }),
     /unsupported send mode: always/,
   );
+  assert.throws(
+    () => control.mutate({ operation: "schedule.upsert", id: "bad-busy", at: "2026-09-10T12:00:00Z", body: "wake", target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" }, busy_policy: "later" }),
+    /unsupported busy policy: later/,
+  );
+});
+
+test("schedule busy policy defaults to defer and is patchable", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  const target = { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" };
+  const created = control.mutate({
+    operation: "schedule.upsert",
+    id: "busy-policy",
+    at: "2026-09-10T12:00:00Z",
+    body: "wake",
+    target,
+  });
+  assert.equal(created.busy_policy, "defer");
+  const updated = control.mutate({ operation: "schedule.update", id: "busy-policy", busy_policy: "skip" });
+  assert.equal(updated.busy_policy, "skip");
 });
 
 test("session binding resolves a schedule without duplicating session identity", () => {
@@ -392,13 +427,12 @@ test("wait is one-shot, session-bound, and owned by the requesting session", () 
   );
 });
 
-test("subagent close interrupts a working turn before archiving", async () => {
+test("subagent stop interrupts a working turn without archive or close", async () => {
   const daemon = new HooksDaemon({ codexapp: codexapp() });
   const calls = [];
   const subagents = {
     async sessionStatus() { calls.push(["status"]); return { state: "working" }; },
-    async interruptSubagent(request) { calls.push(["interrupt", request]); return { state: "interrupted" }; },
-    async archiveSubagent(request) { calls.push(["archive", request]); return { state: "archived" }; },
+    async interruptSubagent(request) { calls.push(["interrupt", request]); return { state: "interrupted", thread_id: request.thread_id, turn_id: request.turn_id }; },
   };
   const control = new FrameworkControlPlane({ store: daemon.store, subagents });
   const target = { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" };
@@ -407,25 +441,24 @@ test("subagent close interrupts a working turn before archiving", async () => {
     turn_id: "turn-child",
     target,
     prompt: "review",
+    ephemeral: true,
     owner_session_id: "session-owner",
   });
-  const closed = await control.mutate({ operation: "subagent.close", thread_id: "thread-child" });
-  assert.equal(closed.state, "closed");
-  assert.equal(closed.close_evidence.interrupted, true);
-  assert.equal(closed.close_evidence.archive_state, "archived");
-  assert.deepEqual(calls.map(([name]) => name), ["status", "interrupt", "archive"]);
+  const stopped = await control.mutate({ operation: "subagent.stop", thread_id: "thread-child" });
+  assert.equal(stopped.state, "released");
+  assert.equal(stopped.stop_evidence.state, "interrupted");
+  assert.deepEqual(calls.map(([name]) => name), ["status", "interrupt"]);
   assert.equal(calls[1][1].turn_id, "turn-child");
-  assert.equal((await control.mutate({ operation: "subagent.close", thread_id: "thread-child" })).state, "closed");
-  assert.equal(calls.length, 3);
+  assert.equal((await control.mutate({ operation: "subagent.stop", thread_id: "thread-child" })).state, "released");
+  assert.equal(calls.length, 2);
 });
 
-test("subagent close archives an idle subagent without interrupt", async () => {
+test("subagent stop records no_active_turn without calling interrupt", async () => {
   const daemon = new HooksDaemon({ codexapp: codexapp() });
   const calls = [];
   const subagents = {
     async sessionStatus() { calls.push("status"); return { state: "idle" }; },
     async interruptSubagent() { calls.push("interrupt"); return { state: "interrupted" }; },
-    async archiveSubagent() { calls.push("archive"); return { state: "archived" }; },
   };
   const control = new FrameworkControlPlane({ store: daemon.store, subagents });
   control.registerSubagent({
@@ -434,12 +467,13 @@ test("subagent close archives an idle subagent without interrupt", async () => {
     target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" },
     prompt: "review",
   });
-  const closed = await control.mutate({ operation: "subagent.close", thread_id: "thread-idle" });
-  assert.equal(closed.close_evidence.interrupted, false);
-  assert.deepEqual(calls, ["status", "archive"]);
+  const stopped = await control.mutate({ operation: "subagent.stop", thread_id: "thread-idle" });
+  assert.equal(stopped.state, "stopped");
+  assert.equal(stopped.stop_evidence.state, "no_active_turn");
+  assert.deepEqual(calls, ["status"]);
 });
 
-test("subagent close fails explicitly when native close capability is unavailable", async () => {
+test("subagent stop fails explicitly when native stop capability is unavailable", async () => {
   const daemon = new HooksDaemon({ codexapp: codexapp() });
   const control = new FrameworkControlPlane({ store: daemon.store });
   control.registerSubagent({
@@ -449,7 +483,285 @@ test("subagent close fails explicitly when native close capability is unavailabl
     prompt: "review",
   });
   await assert.rejects(
-    () => control.mutate({ operation: "subagent.close", thread_id: "thread-no-close" }),
-    /requires daemon native close capabilities/,
+    () => control.mutate({ operation: "subagent.stop", thread_id: "thread-no-close" }),
+    /requires daemon native stop capabilities/,
+  );
+});
+
+test("subagent create registers a fresh ephemeral child with a prompt digest", async () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const calls = [];
+  const subagents = {
+    async createSubagent(request) {
+      calls.push(request);
+      return { thread_id: "thread-new", turn_id: "turn-new", state: "accepted" };
+    },
+  };
+  const control = new FrameworkControlPlane({ store: daemon.store, subagents });
+  const created = await control.mutate({
+    operation: "subagent.create",
+    prompt: "review the candidate",
+    target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" },
+    ephemeral: true,
+    owner_session_id: "owner",
+    model: "test-model",
+    effort: "high",
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].ephemeral, true);
+  assert.equal(calls[0].model, "test-model");
+  assert.equal(calls[0].effort, "high");
+  assert.equal(created.thread_id, "thread-new");
+  assert.equal(created.state, "active");
+  assert.equal(created.ephemeral, true);
+  assert.match(created.prompt_digest, /^[a-f0-9]{64}$/);
+  assert.equal(created.prompt, undefined);
+});
+
+test("subagent create rejects profile at the native create boundary", async () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({
+    store: daemon.store,
+    subagents: { async createSubagent() { throw new Error("must not be called"); } },
+  });
+  await assert.rejects(
+    () => control.mutate({
+      operation: "subagent.create",
+      prompt: "review",
+      target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" },
+      profile: "review",
+    }),
+    (error) => error.code === "unsupported_profile",
+  );
+});
+
+test("schedule subagent rejects profile before persistence and keeps effort patchable", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  const target = { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" };
+  assert.throws(
+    () => control.mutate({
+      operation: "schedule.upsert",
+      id: "profile-schedule",
+      action: "subagent",
+      at: "2026-09-16T12:00:00.000Z",
+      body: "run",
+      target,
+      profile: "review",
+    }),
+    (error) => error.code === "unsupported_profile",
+  );
+  assert.equal(control.query().schedules["profile-schedule"], undefined);
+
+  const created = control.mutate({
+    operation: "schedule.upsert",
+    id: "effort-schedule",
+    action: "subagent",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "run",
+    target,
+    effort: "high",
+  });
+  assert.equal(created.effort, "high");
+  const updated = control.mutate({ operation: "schedule.update", id: "effort-schedule", effort: "low" });
+  assert.equal(updated.effort, "low");
+});
+
+test("non-subagent schedules reject subagent-only fields instead of dropping them", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  assert.throws(
+    () => control.mutate({
+      operation: "schedule.upsert",
+      id: "notify-with-effort",
+      at: "2026-09-16T12:00:00.000Z",
+      body: "wake",
+      target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" },
+      effort: "high",
+    }),
+    /require action=subagent/,
+  );
+});
+
+test("session_missing schedules are terminal for resume and update", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  control.mutate({
+    operation: "schedule.upsert",
+    id: "missing-session",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "wake",
+    target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" },
+  });
+  const schedules = daemon.store.getControl("schedules");
+  schedules["missing-session"] = {
+    ...schedules["missing-session"],
+    state: "session_missing",
+    enabled: false,
+  };
+  daemon.store.putControl("schedules", schedules);
+
+  assert.throws(
+    () => control.mutate({ operation: "schedule.resume", id: "missing-session" }),
+    /schedule is terminal/,
+  );
+  assert.throws(
+    () => control.mutate({ operation: "schedule.update", id: "missing-session", body: "retry" }),
+    /schedule is terminal/,
+  );
+  assert.equal(control.query().schedules["missing-session"].state, "session_missing");
+  assert.equal(control.query().schedules["missing-session"].enabled, false);
+});
+
+test("longhorizon registration is paused until explicit activation", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  control.mutate({
+    operation: "session.bind",
+    alias: "goal-session",
+    target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui", session_id: "session", thread_id: "thread" },
+  });
+  const registered = control.mutate({
+    operation: "longhorizon.register",
+    id: "goal-1",
+    mode: "goal",
+    goal_file: "/tmp/goal.md",
+    session: "goal-session",
+    review_budget: 2,
+  });
+  assert.equal(registered.enabled, false);
+  assert.equal(registered.state, "registered");
+  assert.equal(registered.review_count, 0);
+  assert.equal(control.query().operators.stopless.enabled, false);
+  assert.equal(control.query().operators.longhorizon.enabled, false);
+
+  const active = control.mutate({ operation: "longhorizon.activate", id: "goal-1" });
+  assert.equal(active.enabled, true);
+  assert.equal(active.state, "active");
+  assert.equal(control.query().operators.stopless.enabled, true);
+  assert.equal(control.query().operators.longhorizon.enabled, true);
+
+  const paused = control.mutate({ operation: "longhorizon.pause", id: "goal-1" });
+  assert.equal(paused.enabled, false);
+  assert.equal(paused.state, "paused");
+  assert.equal(control.query().operators.stopless.enabled, false);
+
+  const stopped = control.mutate({ operation: "longhorizon.stop", id: "goal-1" });
+  assert.equal(stopped.state, "stopped");
+  assert.throws(
+    () => control.mutate({ operation: "longhorizon.activate", id: "goal-1" }),
+    /longhorizon is stopped/,
+  );
+});
+
+test("periodic longhorizon owns a paused skip schedule and stop closes it", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  control.mutate({
+    operation: "session.bind",
+    alias: "periodic-session",
+    target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui", session_id: "session", thread_id: "thread" },
+  });
+  const registered = control.mutate({
+    operation: "longhorizon.register",
+    id: "periodic-1",
+    mode: "periodic",
+    prompt: "inspect the goal document",
+    session: "periodic-session",
+    interval_ms: 1000,
+    at: "2026-09-17T00:00:00.000Z",
+  });
+  assert.equal(registered.enabled, false);
+  assert.equal(registered.schedule_state, "disabled");
+  const schedule = control.query().schedules[registered.schedule_id];
+  assert.equal(schedule.busy_policy, "skip");
+  assert.equal(schedule.send_mode, "idle_only");
+  assert.equal(schedule.enabled, false);
+
+  control.mutate({ operation: "longhorizon.activate", id: "periodic-1" });
+  assert.equal(control.query().schedules[registered.schedule_id].enabled, true);
+  const stopped = control.mutate({ operation: "longhorizon.stop", id: "periodic-1" });
+  assert.equal(stopped.state, "stopped");
+  assert.equal(control.query().schedules[registered.schedule_id].state, "stopped");
+  assert.equal(control.query().operators.timer.enabled, false);
+});
+
+test("periodic longhorizon activation cannot resurrect a session_missing schedule", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  control.mutate({
+    operation: "session.bind",
+    alias: "periodic-missing",
+    target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui", session_id: "session", thread_id: "thread" },
+  });
+  const registered = control.mutate({
+    operation: "longhorizon.register",
+    id: "periodic-missing",
+    mode: "periodic",
+    prompt: "inspect the goal document",
+    session: "periodic-missing",
+    interval_ms: 1000,
+    at: "2026-09-17T00:00:00.000Z",
+  });
+  const schedules = daemon.store.getControl("schedules");
+  schedules[registered.schedule_id] = {
+    ...schedules[registered.schedule_id],
+    state: "session_missing",
+    enabled: false,
+  };
+  daemon.store.putControl("schedules", schedules);
+
+  assert.throws(
+    () => control.mutate({ operation: "longhorizon.activate", id: "periodic-missing" }),
+    /longhorizon schedule is terminal/,
+  );
+  const longhorizon = control.query().longhorizon["periodic-missing"];
+  assert.equal(longhorizon.enabled, false);
+  assert.equal(longhorizon.state, "registered");
+  assert.equal(control.query().schedules[registered.schedule_id].state, "session_missing");
+  assert.equal(control.query().schedules[registered.schedule_id].enabled, false);
+});
+
+test("subagent stop accepts a working turn with no observed active turn id", async () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const calls = [];
+  const subagents = {
+    async sessionStatus() { calls.push("status"); return { state: "working" }; },
+    async interruptSubagent(request) {
+      calls.push("interrupt");
+      return { state: "interrupted", thread_id: request.thread_id, turn_id: request.turn_id };
+    },
+  };
+  const control = new FrameworkControlPlane({ store: daemon.store, subagents });
+  control.registerSubagent({
+    thread_id: "thread-child",
+    turn_id: "turn-child",
+    target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" },
+    prompt: "review",
+    ephemeral: true,
+  });
+  const stopped = await control.mutate({ operation: "subagent.stop", thread_id: "thread-child" });
+  assert.equal(stopped.state, "released");
+  assert.deepEqual(calls, ["status", "interrupt"]);
+});
+
+test("subagent stop rejects a different observed active turn", async () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const subagents = {
+    async sessionStatus() { return { state: "working", active_turn_id: "turn-other" }; },
+    async interruptSubagent() { throw new Error("must not interrupt"); },
+  };
+  const control = new FrameworkControlPlane({ store: daemon.store, subagents });
+  control.registerSubagent({
+    thread_id: "thread-child",
+    turn_id: "turn-child",
+    target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" },
+    prompt: "review",
+  });
+  await assert.rejects(
+    () => control.mutate({ operation: "subagent.stop", thread_id: "thread-child" }),
+    (error) => error.code === "subagent_active_turn_mismatch"
+      && error.expected_turn_id === "turn-child"
+      && error.observed_turn_id === "turn-other",
   );
 });

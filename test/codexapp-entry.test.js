@@ -322,15 +322,19 @@ test("internal codexapp creates a native subagent through thread/start and turn/
       prompt: "run task",
       cwd: "/tmp",
       model: "gpt-test",
+      effort: "high",
+      ephemeral: true,
     });
     assert.equal(result.threadId, "thread-new");
     assert.equal(result.turnId, "turn-new");
     assert.deepEqual(calls.filter(([method]) => method === "thread/start" || method === "turn/start"), [
-      ["thread/start", { cwd: "/tmp", model: "gpt-test" }],
+      ["thread/start", { cwd: "/tmp", model: "gpt-test", ephemeral: true }],
       ["turn/start", {
         threadId: "thread-new",
         clientUserMessageId: "timer:spawn:2026-09-16T12:00:00Z",
         input: [{ type: "text", text: "run task", text_elements: [] }],
+        model: "gpt-test",
+        effort: "high",
       }],
     ]);
   } finally {
@@ -341,8 +345,141 @@ test("internal codexapp creates a native subagent through thread/start and turn/
   }
 });
 
-test("internal codexapp interrupts and archives a native subagent thread", async () => {
-  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-subagent-close-"));
+test("internal codexapp reads an ephemeral subagent result from turn/completed without history calls", async () => {
+  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-subagent-result-"));
+  const appserverSocket = join(root, "appserver.sock");
+  const controlSocket = join(root, "codexapp.sock");
+  const calls = [];
+  const native = await startNativeFixture(appserverSocket, calls, {
+    threadStartResult: { thread: { id: "thread-new", status: { type: "active" }, ephemeral: true } },
+    turnStartResult: { turn: { id: "turn-new", status: "inProgress" } },
+    turnCompletedNotification: {
+      threadId: "thread-new",
+      turn: {
+        id: "turn-new",
+        items: [{ type: "agentMessage", id: "item-final", text: '{"gap":"missing verification"}' }],
+        itemsView: "summary",
+        status: "completed",
+      },
+    },
+  });
+  const codexapp = spawn(process.execPath, [
+    "src/codexapp-entry.js",
+    "--socket", controlSocket,
+    "--targets-file", join(root, "targets.json"),
+  ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await readLine(codexapp.stdout);
+    await control(controlSocket, "register_target", {
+      scope_id: "local:test",
+      appserver_id: "test-appserver",
+      namespace: "codex_tui",
+      endpoint: `unix://${appserverSocket}`,
+    });
+    await control(controlSocket, "create_subagent", {
+      address: { scopeId: "local:test", appserverId: "test-appserver", namespace: "codex_tui" },
+      attemptId: "subagent-result",
+      prompt: "review the turn",
+      ephemeral: true,
+    });
+    const result = await control(controlSocket, "read_subagent_result", {
+      address: { scopeId: "local:test", sessionId: "thread-new" },
+      threadId: "thread-new",
+      turnId: "turn-new",
+    });
+    assert.equal(result.state, "completed");
+    assert.equal(result.finalMessage, '{"gap":"missing verification"}');
+    assert.equal(result.item.id, "item-final");
+    assert.deepEqual(calls.filter(([method]) => method === "thread/turns/list"), []);
+  } finally {
+    codexapp.kill("SIGTERM");
+    await once(codexapp, "exit");
+    await new Promise((resolve) => native.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("internal codexapp reports an ephemeral subagent without an observed completion as unknown", async () => {
+  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-subagent-working-"));
+  const appserverSocket = join(root, "appserver.sock");
+  const controlSocket = join(root, "codexapp.sock");
+  const calls = [];
+  const native = await startNativeFixture(appserverSocket, calls, {
+    threadStartResult: { thread: { id: "thread-new", status: { type: "idle" }, ephemeral: true } },
+    turnStartResult: { turn: { id: "turn-new", status: "inProgress" } },
+  });
+  const codexapp = spawn(process.execPath, [
+    "src/codexapp-entry.js",
+    "--socket", controlSocket,
+    "--targets-file", join(root, "targets.json"),
+  ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await readLine(codexapp.stdout);
+    await control(controlSocket, "register_target", {
+      scope_id: "local:test",
+      appserver_id: "test-appserver",
+      namespace: "codex_tui",
+      endpoint: `unix://${appserverSocket}`,
+    });
+    await control(controlSocket, "create_subagent", {
+      address: { scopeId: "local:test", appserverId: "test-appserver", namespace: "codex_tui" },
+      attemptId: "subagent-working",
+      prompt: "review the turn",
+      ephemeral: true,
+    });
+    const result = await control(controlSocket, "read_subagent_result", {
+      address: { scopeId: "local:test", sessionId: "thread-new" },
+      threadId: "thread-new",
+      turnId: "turn-new",
+    });
+    assert.equal(result.state, "unknown");
+    assert.equal(result.finalMessage, null);
+    assert.deepEqual(calls.filter(([method]) => method === "thread/turns/list"), []);
+  } finally {
+    codexapp.kill("SIGTERM");
+    await once(codexapp, "exit");
+    await new Promise((resolve) => native.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("internal codexapp rejects an unsupported subagent profile explicitly", async () => {
+  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-profile-"));
+  const appserverSocket = join(root, "appserver.sock");
+  const controlSocket = join(root, "codexapp.sock");
+  const native = await startNativeFixture(appserverSocket, []);
+  const codexapp = spawn(process.execPath, [
+    "src/codexapp-entry.js",
+    "--socket", controlSocket,
+    "--targets-file", join(root, "targets.json"),
+  ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await readLine(codexapp.stdout);
+    await control(controlSocket, "register_target", {
+      scope_id: "local:test",
+      appserver_id: "test-appserver",
+      namespace: "codex_tui",
+      endpoint: `unix://${appserverSocket}`,
+    });
+    await assert.rejects(
+      control(controlSocket, "create_subagent", {
+        address: { scopeId: "local:test", appserverId: "test-appserver", namespace: "codex_tui" },
+        attemptId: "subagent-profile",
+        prompt: "run task",
+        profile: "review",
+      }),
+      /does not support profile/,
+    );
+  } finally {
+    codexapp.kill("SIGTERM");
+    await once(codexapp, "exit");
+    await new Promise((resolve) => native.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("internal codexapp interrupts a native subagent thread", async () => {
+  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-subagent-stop-"));
   const appserverSocket = join(root, "appserver.sock");
   const controlSocket = join(root, "codexapp.sock");
   const calls = [];
@@ -366,15 +503,57 @@ test("internal codexapp interrupts and archives a native subagent thread", async
       turnId: "turn-child",
     });
     assert.equal(interrupted.state, "interrupted");
-    const archived = await control(controlSocket, "archive_thread", {
-      address: { scopeId: "local:test", sessionId: "thread-child" },
-      threadId: "thread-child",
-    });
-    assert.equal(archived.state, "archived");
     assert.deepEqual(calls.filter(([method]) => method === "turn/interrupt" || method === "thread/archive"), [
       ["turn/interrupt", { threadId: "thread-child", turnId: "turn-child" }],
-      ["thread/archive", { threadId: "thread-child" }],
     ]);
+  } finally {
+    codexapp.kill("SIGTERM");
+    await once(codexapp, "exit");
+    await new Promise((resolve) => native.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("internal codexapp steers a live turn through turn/steer", async () => {
+  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-steer-"));
+  const appserverSocket = join(root, "appserver.sock");
+  const controlSocket = join(root, "codexapp.sock");
+  const calls = [];
+  const native = await startNativeFixture(appserverSocket, calls, {
+    threadStatus: { type: "active", activeFlags: [] },
+    turns: [{ id: "turn-live", status: "inProgress", items: [] }],
+    steerResult: { turnId: "turn-live" },
+  });
+  const codexapp = spawn(process.execPath, [
+    "src/codexapp-entry.js",
+    "--socket", controlSocket,
+    "--targets-file", join(root, "targets.json"),
+  ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await readLine(codexapp.stdout);
+    await control(controlSocket, "register_target", {
+      scope_id: "local:test",
+      appserver_id: "test-appserver",
+      namespace: "codex_tui",
+      endpoint: `unix://${appserverSocket}`,
+    });
+    const result = await control(controlSocket, "steer", {
+      message: {
+        messageId: "steer-1",
+        attemptId: "steer-1",
+        from: { scopeId: "local:hooks", sessionId: "hooksd" },
+        to: { scopeId: "local:test", sessionId: "thread-1" },
+        body: "adjust course",
+        turnId: "turn-live",
+      },
+    });
+    assert.equal(result.state, "accepted");
+    assert.deepEqual(calls.at(-1), ["turn/steer", {
+      threadId: "thread-1",
+      expectedTurnId: "turn-live",
+      input: [{ type: "text", text: "adjust course", text_elements: [] }],
+      clientUserMessageId: "steer-1",
+    }]);
   } finally {
     codexapp.kill("SIGTERM");
     await once(codexapp, "exit");
@@ -430,22 +609,33 @@ async function startNativeFixture(socketPath, calls, options = {}) {
         }
         calls.push([request.method, request.params]);
         let response;
+        let notification = null;
         if (request.method === "initialize") response = { result: { userAgent: "fixture" } };
-        else if (request.method === "thread/read") response = { result: { thread: { id: request.params.threadId, status: { type: "idle" }, turns: [], ...(options.threadExtras || {}) } } };
+        else if (request.method === "thread/read") response = { result: { thread: { id: request.params.threadId, status: options.threadStatus || { type: "idle" }, turns: options.turns || [], ...(options.threadExtras || {}) } } };
         else if (request.method === "thread/loaded/list") response = { result: { data: ["thread-1"], nextCursor: null } };
         else if (request.method === "thread/items/list") response = options.itemsError
           ? { error: options.itemsError }
           : { result: options.readPages?.[Math.min(readIndex++, options.readPages.length - 1)] || { data: [], nextCursor: null, backwardsCursor: null } };
         else if (request.method === "thread/turns/list") response = options.turnsError
           ? { error: options.turnsError }
-          : { result: { data: [], nextCursor: null } };
+          : { result: { data: options.turns || [], nextCursor: null } };
         else if (request.method === "thread/queue/add") response = { result: options.queueResult || { accepted: true } };
         else if (request.method === "thread/start") response = { result: options.threadStartResult || { thread: { id: "thread-new", status: { type: "idle" } } } };
-        else if (request.method === "turn/start") response = { result: options.turnStartResult || { turn: { id: "turn-new", status: "inProgress" } } };
+        else if (request.method === "turn/start") {
+          response = { result: options.turnStartResult || { turn: { id: "turn-new", status: "inProgress" } } };
+          if (options.turnCompletedNotification) {
+            notification = {
+              method: "turn/completed",
+              params: options.turnCompletedNotification,
+            };
+          }
+        }
+        else if (request.method === "turn/steer") response = { result: options.steerResult || { turnId: request.params.expectedTurnId } };
         else if (request.method === "turn/interrupt") response = { result: {} };
         else if (request.method === "thread/archive") response = { result: {} };
         else response = { error: { code: -32601, message: `unsupported ${request.method}` } };
         socket.write(encodeFrame(JSON.stringify({ id: request.id, ...response })));
+        if (notification) socket.write(encodeFrame(JSON.stringify(notification)));
       }
     });
   });

@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import { McpStateClient } from "./mcp.js";
 import {
   installFromSource,
@@ -29,6 +30,8 @@ if (operation === "init") {
   await waitCommand(args);
 } else if (operation === "subagent") {
   await subagentCommand(args);
+} else if (operation === "mcp") {
+  mcpCommand(args);
 } else if (operation === "config") {
   configCommand(args);
 } else if (operation === "hook") {
@@ -37,6 +40,8 @@ if (operation === "init") {
   supervisorCommand(args);
 } else if (operation === "operator") {
   await operatorCommand(args);
+} else if (operation === "longhorizon") {
+  await longHorizonCommand(args);
 } else if (operation === "config-show") {
   const record = readInstallRecord();
   const daemon = readJson(record.daemon_config);
@@ -119,11 +124,14 @@ async function scheduleCommand(args) {
       "--session",
       "--target",
       "--send-mode",
+      "--busy-policy",
       "--every",
       "--once",
       "--action",
       "--cwd",
+      "--profile",
       "--model",
+      "--effort",
       "--allow-concurrent",
       "--owner-session",
     ]);
@@ -140,9 +148,12 @@ async function scheduleCommand(args) {
       at,
       body,
       ...(options.send_mode ? { send_mode: options.send_mode } : {}),
+      ...(options.busy_policy ? { busy_policy: options.busy_policy } : {}),
       ...(options.every ? { interval_ms: parseDuration(options.every) } : {}),
       ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.profile ? { profile: options.profile } : {}),
       ...(options.model ? { model: options.model } : {}),
+      ...(options.effort ? { effort: options.effort } : {}),
       ...(options.allow_concurrent === true ? { allow_concurrent: true } : {}),
       ...(ownerSessionId(options) ? { owner_session_id: ownerSessionId(options) } : {}),
     };
@@ -176,13 +187,16 @@ async function scheduleCommand(args) {
       "--at",
       "--body",
       "--send-mode",
+      "--busy-policy",
       "--session",
       "--target",
       "--every",
       "--once",
       "--action",
       "--cwd",
+      "--profile",
       "--model",
+      "--effort",
       "--allow-concurrent",
       "--owner-session",
     ]);
@@ -194,11 +208,14 @@ async function scheduleCommand(args) {
       ...(options.at ? { at: options.at } : {}),
       ...(options.body ? { body: options.body } : {}),
       ...(options.send_mode ? { send_mode: options.send_mode } : {}),
+      ...(options.busy_policy ? { busy_policy: options.busy_policy } : {}),
       ...(mode ? { mode } : {}),
       ...(options.every ? { interval_ms: parseDuration(options.every) } : {}),
       ...(options.action ? { action: options.action } : {}),
       ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.profile ? { profile: options.profile } : {}),
       ...(options.model ? { model: options.model } : {}),
+      ...(options.effort ? { effort: options.effort } : {}),
       ...(options.allow_concurrent === true ? { allow_concurrent: true } : {}),
       ...(options.session ? { session: options.session } : {}),
       ...(options.target ? { target: parseTargetIdentity(options.target) } : {}),
@@ -223,6 +240,7 @@ async function waitCommand(args) {
     "--session",
     "--async",
     "--send-mode",
+    "--busy-policy",
     "--id",
     "--timeout",
     "--owner-session",
@@ -235,14 +253,72 @@ async function waitCommand(args) {
     body,
     session: required(session, "current session alias; bind the session or pass --session"),
     send_mode: options.send_mode || (options.async ? "idle_only" : "working_allowed"),
+    busy_policy: options.busy_policy || "defer",
     ...(ownerSessionId(options) ? { owner_session_id: ownerSessionId(options) } : {}),
     ...(options.timeout ? { timeout_ms: parseDuration(options.timeout) } : {}),
   };
   await mutate(request);
 }
 
+function mcpCommand(args) {
+  const [subcommand, ...rest] = args;
+  if (subcommand !== "register") throw new Error("usage: rccs mcp register [--name <name>] [--command <path>]");
+  const options = parseOptions(rest, ["--name", "--command"]);
+  const record = readInstallRecord();
+  const name = options.name || "routecodex-hooks";
+  const command = options.command || record.mcp_wrapper;
+  print(registerMcp({ name, command }));
+}
+
+function registerMcp({ name, command, codexHome = null }) {
+  const environment = {
+    ...process.env,
+    ...(codexHome == null ? {} : { CODEX_HOME: resolve(codexHome) }),
+  };
+  const existing = spawnSync("codex", ["mcp", "get", name, "--json"], { encoding: "utf8", env: environment });
+  if (existing.status === 0) {
+    const parsed = JSON.parse(existing.stdout);
+    const registered = parsed?.transport?.command || parsed?.command;
+    if (registered !== command) {
+      throw new Error(`MCP entry already exists with different command: ${name}`);
+    }
+    return { operation: "mcp.register", name, command, state: "already_registered" };
+  }
+  if (!/No MCP server (?:named .* )?found|not found/i.test(existing.stderr || "")) {
+    throw new Error(`cannot inspect MCP entry ${name}: ${(existing.stderr || existing.stdout).trim()}`);
+  }
+  const added = spawnSync("codex", ["mcp", "add", name, "--", command], { encoding: "utf8", env: environment });
+  if (added.status !== 0) throw new Error(`cannot register MCP entry ${name}: ${(added.stderr || added.stdout).trim()}`);
+  return { operation: "mcp.register", name, command, state: "registered" };
+}
+
 async function subagentCommand(args) {
   const [subcommand, ...rest] = args;
+  if (subcommand === "create") {
+    const options = parseOptions(rest.slice(1), [
+      "--target",
+      "--cwd",
+      "--profile",
+      "--model",
+      "--effort",
+      "--ephemeral",
+      "--owner-session",
+      "--id",
+    ]);
+    await mutate({
+      operation: "subagent.create",
+      prompt: required(rest[0], "subagent prompt"),
+      target: parseTargetIdentity(required(options.target, "--target")),
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.profile ? { profile: options.profile } : {}),
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.effort ? { effort: options.effort } : {}),
+      ...(options.ephemeral === true ? { ephemeral: true } : {}),
+      ...(options.owner_session ? { owner_session_id: options.owner_session } : {}),
+      ...(options.id ? { attempt_id: options.id } : {}),
+    });
+    return;
+  }
   if (subcommand === "list") {
     const options = parseOptions(rest, ["--global", "--session"]);
     if (options.global && options.session) throw new Error("--global and --session cannot be used together");
@@ -254,11 +330,22 @@ async function subagentCommand(args) {
     print(subagents);
     return;
   }
-  if (subcommand === "close") {
-    await mutate({ operation: "subagent.close", thread_id: required(rest[0], "subagent thread id") });
+  if (subcommand === "show") {
+    const threadId = required(rest[0], "subagent thread id");
+    const state = await queryControl();
+    const subagent = state.state.subagents?.[threadId];
+    if (!subagent) throw new Error(`subagent not found: ${threadId}`);
+    print(subagent);
     return;
   }
-  throw new Error("usage: rccs subagent list [--global|--session <session-id>] | rccs subagent close <thread-id>");
+  if (subcommand === "stop") {
+    await mutate({ operation: "subagent.stop", thread_id: required(rest[0], "subagent thread id") });
+    return;
+  }
+  if (["close", "archive", "delete"].includes(subcommand)) {
+    throw new Error(`unsupported subagent command: ${subcommand}; use rccs subagent stop <thread-id>`);
+  }
+  throw new Error("usage: rccs subagent create <prompt> --target <namespace>/<appserver> [--ephemeral] | rccs subagent list [--global|--session <session-id>] | rccs subagent show <thread-id> | rccs subagent stop <thread-id>");
 }
 
 function configCommand(args) {
@@ -295,8 +382,65 @@ async function operatorCommand(args) {
   await mutate({ operation: "operator.set_enabled", name: required(name, "operator name"), enabled: subcommand === "enable" });
 }
 
+async function longHorizonCommand(args) {
+  const [subcommand, ...rest] = args;
+  if (subcommand === "register") {
+    const options = parseOptions(rest.slice(1), [
+      "--mode",
+      "--goal-file",
+      "--prompt",
+      "--session",
+      "--every",
+      "--at",
+      "--owner-session",
+      "--review-budget",
+    ]);
+    await mutate({
+      operation: "longhorizon.register",
+      id: required(rest[0], "longhorizon id"),
+      mode: required(options.mode, "--mode"),
+      ...(options.goal_file ? { goal_file: options.goal_file } : {}),
+      ...(options.prompt ? { prompt: options.prompt } : {}),
+      ...(options.session ? { session: options.session } : {}),
+      ...(options.every ? { interval_ms: parseDuration(options.every) } : {}),
+      ...(options.at ? { at: options.at } : {}),
+      ...(options.owner_session ? { owner_session_id: options.owner_session } : {}),
+      ...(options.review_budget ? { review_budget: Number(options.review_budget) } : {}),
+    });
+    return;
+  }
+  if (subcommand === "list") {
+    const options = parseOptions(rest, ["--global", "--session"]);
+    const state = await queryControl();
+    const owner = options.global ? null : options.session || currentSessionId();
+    if (!options.global && !owner) throw new Error("current session; pass --session or --global");
+    print(Object.values(state.state.longhorizon || {})
+      .filter((record) => owner == null || record.owner_session_id === owner)
+      .sort((left, right) => left.id.localeCompare(right.id)));
+    return;
+  }
+  if (subcommand === "show") {
+    const state = await queryControl();
+    const record = state.state.longhorizon?.[required(rest[0], "longhorizon id")];
+    if (!record) throw new Error(`longhorizon not found: ${rest[0]}`);
+    print(record);
+    return;
+  }
+  if (["activate", "pause", "stop", "remove"].includes(subcommand)) {
+    const operation = {
+      activate: "longhorizon.activate",
+      pause: "longhorizon.pause",
+      stop: "longhorizon.stop",
+      remove: "longhorizon.remove",
+    }[subcommand];
+    await mutate({ operation, id: required(rest[0], "longhorizon id") });
+    return;
+  }
+  throw new Error("usage: rccs longhorizon register|list|show|activate|pause|stop|remove ...");
+}
+
 function usage() {
-  return "usage: rccs init | rccs status | rccs session bind|unbind ... | rccs schedule add|list|show|update|remove|pause|resume|stop ... | rccs wait <duration> [body] [--async] | rccs subagent list|close ... | rccs config show|set ... | rccs hook enable|disable stop | rccs supervisor enable|disable | rccs operator enable|disable <name>";
+  return "usage: rccs init | rccs status | rccs session bind|unbind ... | rccs schedule add|list|show|update|remove|pause|resume|stop ... | rccs wait <duration> [body] [--async] | rccs subagent create|list|show|stop ... | rccs longhorizon register|list|show|activate|pause|stop|remove ... | rccs mcp register ... | rccs config show|set ... | rccs hook enable|disable stop | rccs supervisor enable|disable | rccs operator enable|disable <name>";
 }
 
 function initCommand(args) {
@@ -304,7 +448,7 @@ function initCommand(args) {
   const previous = tryReadInstallRecord();
   const reusePrevious = !options.codexHome && !options.binDir && !options.agentHome;
   const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  return installFromSource({
+  const record = installFromSource({
     sourceRoot,
     codexHome: options.codexHome ?? (reusePrevious && previous?.install_root ? dirname(previous.install_root) : undefined),
     binDir: options.binDir ?? (reusePrevious ? previous?.bin_directory : undefined),
@@ -313,6 +457,10 @@ function initCommand(args) {
     stopHookEnabled: options.stopHookEnabled ?? (reusePrevious ? previous?.stop_hook_enabled : undefined) ?? true,
     supervisorEnabled: options.supervisorEnabled ?? (reusePrevious ? previous?.supervisor_enabled : undefined),
   });
+  return {
+    ...record,
+    mcp_registration: registerMcp({ name: "routecodex-hooks", command: record.mcp_wrapper, codexHome: options.codexHome }),
+  };
 }
 
 function parseInitOptions(args) {
@@ -461,7 +609,7 @@ function resolveSessionTarget(daemon, options, sessionId) {
 
 function parseOptions(args, allowed) {
   const allowedSet = new Set(allowed);
-  const booleanOptions = new Set(["--replace", "--once", "--allow-concurrent", "--async", "--global"]);
+  const booleanOptions = new Set(["--replace", "--once", "--allow-concurrent", "--async", "--global", "--ephemeral"]);
   const options = {};
   for (let index = 0; index < args.length; index += 1) {
     const key = args[index];

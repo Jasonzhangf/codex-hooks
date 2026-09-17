@@ -6,9 +6,10 @@ import { assertNonEmpty } from "./protocol.js";
 export const CODEXAPP_CAPABILITIES = Object.freeze([
   "session_status",
   "send_message_to_thread",
+  "steer_message",
   "create_subagent",
   "interrupt_turn",
-  "archive_thread",
+  "read_subagent_result",
 ]);
 export const CODEXAPP_REQUIRED_CAPABILITIES = Object.freeze([
   "session_status",
@@ -18,9 +19,10 @@ export const CODEXAPP_REQUIRED_CAPABILITIES = Object.freeze([
 const BRIDGE_METHODS = Object.freeze({
   session_status: "session_status",
   send_message_to_thread: "send",
+  steer_message: "steer",
   create_subagent: "create_subagent",
   interrupt_turn: "interrupt_turn",
-  archive_thread: "archive_thread",
+  read_subagent_result: "read_subagent_result",
 });
 
 const DEFINITIVE_SEND_ERRORS = new Set([
@@ -99,9 +101,10 @@ export class CodexAppBridgePort {
       throw new Error("codexapp bridge lacks the required session status/send control methods");
     }
     const advertised = ["session_status", "send_message_to_thread"];
+    if (bridge.execution?.includes(BRIDGE_METHODS.steer_message)) advertised.push("steer_message");
     if (bridge.execution?.includes(BRIDGE_METHODS.create_subagent)) advertised.push("create_subagent");
     if (bridge.execution?.includes(BRIDGE_METHODS.interrupt_turn)) advertised.push("interrupt_turn");
-    if (bridge.execution?.includes(BRIDGE_METHODS.archive_thread)) advertised.push("archive_thread");
+    if (bridge.query?.includes(BRIDGE_METHODS.read_subagent_result)) advertised.push("read_subagent_result");
     if (!Array.isArray(bridge.namespaces)) throw new Error("codexapp bridge did not advertise namespaces");
     const status = await this.client.call("status");
     if (status?.protocol !== "codex-comm/v1" || status.bridge !== "up" || !Array.isArray(status.scopes)) {
@@ -152,8 +155,38 @@ export class CodexAppBridgePort {
     };
   }
 
-  async create_subagent({ target, prompt, attempt_id, cwd = null, model = null }) {
+  async steer_message({ target, body, attempt_id, turn_id }) {
     const id = assertNonEmpty(attempt_id, "attempt_id");
+    const to = this.targetAddress(target);
+    const result = await this.client.call(BRIDGE_METHODS.steer_message, {
+      from: this.source,
+      to,
+      body: assertNonEmpty(body, "body"),
+      messageId: id,
+      attemptId: id,
+      turnId: assertNonEmpty(turn_id, "turn_id"),
+      requiresAck: false,
+    });
+    assertSendBinding(result, id, this.source, to);
+    const state = result?.state === "delivered" ? "delivered" : result?.state === "accepted" ? "accepted" : null;
+    if (!state) throw new Error("codexapp bridge returned no accepted steer state");
+    const delivered = result.evidence?.find((entry) => entry.state === "delivered");
+    return {
+      accepted: true,
+      state,
+      attempt_id: id,
+      target_receipt: delivered?.targetReceipt || null,
+      native_result: result,
+    };
+  }
+
+  async create_subagent({ target, prompt, attempt_id, cwd = null, profile = null, model = null, effort = null, ephemeral = false }) {
+    const id = assertNonEmpty(attempt_id, "attempt_id");
+    if (profile != null) {
+      throw Object.assign(new Error("codexapp create_subagent does not support profile at the native App Server boundary"), {
+        code: "unsupported_profile",
+      });
+    }
     const address = this.targetScopeAddress(target);
     const result = await this.client.call(BRIDGE_METHODS.create_subagent, {
       address,
@@ -161,6 +194,8 @@ export class CodexAppBridgePort {
       attemptId: id,
       ...(cwd == null ? {} : { cwd: assertNonEmpty(cwd, "cwd") }),
       ...(model == null ? {} : { model: assertNonEmpty(model, "model") }),
+      ...(effort == null ? {} : { effort: assertNonEmpty(effort, "effort") }),
+      ...(ephemeral === true ? { ephemeral: true } : {}),
     });
     if (!result || result.attemptId !== id || result.namespace !== address.namespace || result.appserverId !== address.appserverId) {
       throw new Error("codexapp create_subagent receipt identity mismatch");
@@ -191,14 +226,18 @@ export class CodexAppBridgePort {
     return result;
   }
 
-  async archive_thread({ target, thread_id }) {
+  async read_subagent_result({ target, thread_id, turn_id }) {
     const address = this.targetAddress({ ...target, thread_id });
-    const result = await this.client.call(BRIDGE_METHODS.archive_thread, {
+    const result = await this.client.call(BRIDGE_METHODS.read_subagent_result, {
       address,
       threadId: assertNonEmpty(thread_id, "thread_id"),
+      turnId: assertNonEmpty(turn_id, "turn_id"),
     });
-    if (result?.scopeId !== address.scopeId || result?.threadId !== thread_id || result?.state !== "archived") {
-      throw new Error("codexapp archive_thread receipt identity mismatch");
+    if (result?.scopeId !== address.scopeId || result?.threadId !== thread_id || result?.turnId !== turn_id) {
+      throw new Error("codexapp read_subagent_result identity mismatch");
+    }
+    if (!["working", "completed", "failed", "interrupted", "unknown"].includes(result.state)) {
+      throw new Error("codexapp read_subagent_result returned an unsupported state");
     }
     return result;
   }
@@ -296,7 +335,10 @@ class UnixControlClient {
         socket.destroy();
         callback(value);
       };
-      const timer = setTimeout(() => finish(reject, Object.assign(new Error(`codexapp control timeout: ${method}`), { code: "transport_timeout", uncertain: method === BRIDGE_METHODS.send_message_to_thread })), this.timeoutMs);
+      const timer = setTimeout(() => finish(reject, Object.assign(new Error(`codexapp control timeout: ${method}`), {
+        code: "transport_timeout",
+        uncertain: [BRIDGE_METHODS.send_message_to_thread, BRIDGE_METHODS.steer_message].includes(method),
+      })), this.timeoutMs);
       socket.setEncoding("utf8");
       socket.on("connect", () => {
         requestWritten = true;
@@ -323,7 +365,7 @@ class UnixControlClient {
 }
 
 function markUncertainSend(error, method, requestWritten) {
-  if (method === BRIDGE_METHODS.send_message_to_thread && requestWritten && !DEFINITIVE_SEND_ERRORS.has(error.code)) {
+  if ([BRIDGE_METHODS.send_message_to_thread, BRIDGE_METHODS.steer_message].includes(method) && requestWritten && !DEFINITIVE_SEND_ERRORS.has(error.code)) {
     error.uncertain = true;
     error.code ||= "unknown_delivery";
   }

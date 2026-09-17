@@ -211,6 +211,9 @@ test("CodexApp bridge port creates a subagent through the typed bridge capabilit
       prompt: "run task",
       attempt_id: "timer:spawn:2026-09-16T12:00:00Z",
       cwd: "/tmp",
+      model: "gpt-test",
+      effort: "high",
+      ephemeral: true,
     });
     assert.equal(receipt.thread_id, "thread-new");
     assert.equal(receipt.turn_id, "turn-new");
@@ -219,11 +222,31 @@ test("CodexApp bridge port creates a subagent through the typed bridge capabilit
       prompt: "run task",
       attemptId: "timer:spawn:2026-09-16T12:00:00Z",
       cwd: "/tmp",
+      model: "gpt-test",
+      effort: "high",
+      ephemeral: true,
     });
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(socketPath, { force: true });
   }
+});
+
+test("CodexApp bridge port rejects unsupported subagent profile before transport", async () => {
+  const port = new CodexAppBridgePort({
+    socket: "/tmp/codex-hooks-port-profile.sock",
+    source: { scopeId: "hooks", sessionId: "hooksd" },
+    target_scopes: { "codex_tui/tui-appserver": "local:tui" },
+  });
+  await assert.rejects(
+    () => port.create_subagent({
+      target: { namespace: "codex_tui", appserver_id: "tui-appserver" },
+      prompt: "run task",
+      attempt_id: "attempt-profile",
+      profile: "review",
+    }),
+    (error) => error.code === "unsupported_profile",
+  );
 });
 
 test("CodexApp bridge port resolves subagent scope from configured mapping and rejects mismatches", async () => {
@@ -286,7 +309,7 @@ test("CodexApp bridge port resolves subagent scope from configured mapping and r
   }
 });
 
-test("CodexApp bridge port interrupts and archives a subagent through typed capabilities", async () => {
+test("CodexApp bridge port interrupts a subagent without advertising archive", async () => {
   const socketPath = join(tmpdir(), `codex-hooks-port-close-${process.pid}.sock`);
   const requests = [];
   const server = net.createServer((socket) => {
@@ -300,13 +323,11 @@ test("CodexApp bridge port interrupts and archives a subagent through typed capa
       requests.push(request);
       let result;
       if (request.method === "capabilities") {
-        result = { protocol: "codex-comm/v1", query: ["session_status"], execution: ["send", "interrupt_turn", "archive_thread"], namespaces: ["codex_tui"] };
+        result = { protocol: "codex-comm/v1", query: ["session_status"], execution: ["send", "interrupt_turn"], namespaces: ["codex_tui"] };
       } else if (request.method === "status") {
-        result = { protocol: "codex-comm/v1", bridge: "up", service_identities: [{ scopeId: "hooks", sessionId: "hooksd", kind: "service", live: true }], scopes: [{ scopeId: "local:tui", appserverId: "tui-appserver", namespace: "codex_tui", capabilities: ["send_message_to_thread", "interrupt_turn", "archive_thread"] }] };
+        result = { protocol: "codex-comm/v1", bridge: "up", service_identities: [{ scopeId: "hooks", sessionId: "hooksd", kind: "service", live: true }], scopes: [{ scopeId: "local:tui", appserverId: "tui-appserver", namespace: "codex_tui", capabilities: ["send_message_to_thread", "interrupt_turn"] }] };
       } else if (request.method === "interrupt_turn") {
         result = { protocol: "codex-comm/v1", scopeId: "local:tui", appserverId: "tui-appserver", namespace: "codex_tui", threadId: request.params.threadId, turnId: request.params.turnId, state: "interrupted" };
-      } else if (request.method === "archive_thread") {
-        result = { protocol: "codex-comm/v1", scopeId: "local:tui", appserverId: "tui-appserver", namespace: "codex_tui", threadId: request.params.threadId, state: "archived" };
       } else {
         result = { state: "accepted" };
       }
@@ -324,19 +345,95 @@ test("CodexApp bridge port interrupts and archives a subagent through typed capa
       source_kind: "service",
       target_scopes: { "codex_tui/tui-appserver": "local:tui" },
     });
-    assert.deepEqual(await port.capabilities(), ["session_status", "send_message_to_thread", "interrupt_turn", "archive_thread"]);
+    assert.deepEqual(await port.capabilities(), ["session_status", "send_message_to_thread", "interrupt_turn"]);
     const target = { namespace: "codex_tui", appserver_id: "tui-appserver", scope_id: "local:tui" };
     assert.equal((await port.interrupt_turn({ target, thread_id: "thread-child", turn_id: "turn-child" })).state, "interrupted");
-    assert.equal((await port.archive_thread({ target, thread_id: "thread-child" })).state, "archived");
     assert.deepEqual(requests.find((request) => request.method === "interrupt_turn").params, {
       address: { scopeId: "local:tui", sessionId: "thread-child" },
       threadId: "thread-child",
       turnId: "turn-child",
     });
-    assert.deepEqual(requests.find((request) => request.method === "archive_thread").params, {
+    assert.equal(requests.some((request) => request.method === "archive_thread"), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(socketPath, { force: true });
+  }
+});
+
+test("CodexApp bridge port reads a typed subagent result and rejects identity or state drift", async () => {
+  const socketPath = join(tmpdir(), `codex-hooks-port-result-${process.pid}.sock`);
+  const requests = [];
+  let resultOverride = null;
+  const server = net.createServer((socket) => {
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      const index = buffer.indexOf("\n");
+      if (index < 0) return;
+      const request = JSON.parse(buffer.slice(0, index));
+      requests.push(request);
+      const result = resultOverride || {
+        protocol: "codex-comm/v1",
+        scopeId: "local:tui",
+        appserverId: "tui-appserver",
+        namespace: "codex_tui",
+        threadId: "thread-child",
+        turnId: "turn-child",
+        state: "completed",
+        finalMessage: '{"gap":"none"}',
+        item: { type: "agentMessage", id: "item-1", text: '{"gap":"none"}' },
+      };
+      socket.end(`${JSON.stringify({ id: request.id, result })}\n`);
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  try {
+    const port = new CodexAppBridgePort({
+      socket: socketPath,
+      source: { scopeId: "hooks", sessionId: "hooksd" },
+      target_scopes: { "codex_tui/tui-appserver": "local:tui" },
+    });
+    const target = { namespace: "codex_tui", appserver_id: "tui-appserver", scope_id: "local:tui" };
+    const result = await port.read_subagent_result({ target, thread_id: "thread-child", turn_id: "turn-child" });
+    assert.equal(result.state, "completed");
+    assert.equal(result.finalMessage, '{"gap":"none"}');
+    assert.deepEqual(requests.at(-1).params, {
       address: { scopeId: "local:tui", sessionId: "thread-child" },
       threadId: "thread-child",
+      turnId: "turn-child",
     });
+
+    resultOverride = {
+      protocol: "codex-comm/v1",
+      scopeId: "local:tui",
+      appserverId: "tui-appserver",
+      namespace: "codex_tui",
+      threadId: "other-thread",
+      turnId: "turn-child",
+      state: "completed",
+    };
+    await assert.rejects(
+      () => port.read_subagent_result({ target, thread_id: "thread-child", turn_id: "turn-child" }),
+      /identity mismatch/,
+    );
+
+    resultOverride = {
+      protocol: "codex-comm/v1",
+      scopeId: "local:tui",
+      appserverId: "tui-appserver",
+      namespace: "codex_tui",
+      threadId: "thread-child",
+      turnId: "turn-child",
+      state: "sleeping",
+    };
+    await assert.rejects(
+      () => port.read_subagent_result({ target, thread_id: "thread-child", turn_id: "turn-child" }),
+      /unsupported state/,
+    );
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(socketPath, { force: true });

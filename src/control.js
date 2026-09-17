@@ -1,18 +1,20 @@
+import crypto from "node:crypto";
 import {
   assertNonEmpty,
   clone,
   normalizeTarget,
   normalizeTargetScope,
+  BUSY_POLICIES,
   SCHEDULE_ACTIONS,
   SCHEDULE_MODES,
   SEND_MODES,
 } from "./protocol.js";
 
 export const OPERATOR_REGISTRY = Object.freeze([
-  { name: "stopless", hook_kinds: ["stop"], state_resource: "stopless_state", status: "contract-only" },
+  { name: "stopless", hook_kinds: ["stop"], state_resource: "stopless_state", status: "implemented" },
   { name: "update-goal", hook_kinds: ["update-goal"], state_resource: "update_goal_state", status: "contract-only" },
   { name: "timer", hook_kinds: [], triggers: ["daemon_clock"], state_resource: "schedule_state", status: "implemented" },
-  { name: "longhorizon", hook_kinds: [], triggers: ["daemon_checkpoint"], state_resource: "longhorizon_state", status: "contract-only" },
+  { name: "longhorizon", hook_kinds: ["stop"], triggers: ["daemon_clock"], state_resource: "longhorizon_state", status: "implemented" },
   { name: "memory", hook_kinds: ["input", "tool-call"], state_resource: "memory_state", status: "out-of-scope" },
 ]);
 const OPERATORS = Object.freeze(OPERATOR_REGISTRY.map((entry) => entry.name));
@@ -33,7 +35,16 @@ export class FrameworkControlPlane {
       session_bindings: this.store.getControl("session_bindings") || {},
       schedules: this.store.getControl("schedules") || {},
       subagents: this.store.getControl("subagents") || {},
+      longhorizon: this.store.getControl("longhorizon") || {},
+      goal_reviews: this.store.getControl("goal_reviews") || {},
+      stop_suppression: this.store.getControl("stop_suppression") || {},
+      delivery_intents: this.listDeliveryIntents(),
     };
+  }
+
+  listDeliveryIntents() {
+    if (!this.store.listIntents) return {};
+    return Object.fromEntries(this.store.listIntents().map((record) => [record.intent_id, clone(record)]));
   }
 
   mutate(request) {
@@ -50,7 +61,13 @@ export class FrameworkControlPlane {
     if (operation === "schedule.update") return this.updateSchedule(request);
     if (operation === "schedule.stop") return this.stopSchedule(request);
     if (operation === "wait.create" || operation === "wait.block") return this.addWait(request);
-    if (operation === "subagent.close") return this.closeSubagent(request);
+    if (operation === "longhorizon.register") return this.registerLongHorizon(request);
+    if (operation === "longhorizon.activate") return this.setLongHorizonEnabled(request, true);
+    if (operation === "longhorizon.pause") return this.setLongHorizonEnabled(request, false);
+    if (operation === "longhorizon.stop") return this.stopLongHorizon(request);
+    if (operation === "longhorizon.remove") return this.removeLongHorizon(request);
+    if (operation === "subagent.create") return this.createSubagent(request);
+    if (operation === "subagent.stop") return this.stopSubagent(request);
     throw new Error(`unsupported control operation: ${operation}`);
   }
 
@@ -119,12 +136,15 @@ export class FrameworkControlPlane {
     const id = assertNonEmpty(request.id, "id");
     const action = request.action || SCHEDULE_ACTIONS.NOTIFY;
     if (!Object.values(SCHEDULE_ACTIONS).includes(action)) throw new Error(`unsupported schedule action: ${action}`);
+    assertScheduleActionOptions(action, request);
     const mode = request.mode || SCHEDULE_MODES.ONCE;
     if (!Object.values(SCHEDULE_MODES).includes(mode)) throw new Error(`unsupported schedule mode: ${mode}`);
     const at = assertNonEmpty(request.at, "at");
     const body = assertNonEmpty(request.body, "body");
     const sendMode = request.send_mode || SEND_MODES.IDLE_ONLY;
     if (!Object.values(SEND_MODES).includes(sendMode)) throw new Error(`unsupported send mode: ${sendMode}`);
+    const busyPolicy = request.busy_policy || BUSY_POLICIES.DEFER;
+    if (!Object.values(BUSY_POLICIES).includes(busyPolicy)) throw new Error(`unsupported busy policy: ${busyPolicy}`);
     if (Number.isNaN(Date.parse(at))) throw new Error("schedule time must be an ISO timestamp");
     if (action === SCHEDULE_ACTIONS.WAIT && mode !== SCHEDULE_MODES.ONCE) {
       throw new Error("wait schedules must be one-shot");
@@ -154,10 +174,12 @@ export class FrameworkControlPlane {
       target,
       body,
       send_mode: sendMode,
+      busy_policy: busyPolicy,
       ...(ownerSessionId == null ? {} : { owner_session_id: assertNonEmpty(ownerSessionId, "owner_session_id") }),
       ...(action === SCHEDULE_ACTIONS.SUBAGENT ? {
         ...(request.cwd == null ? {} : { cwd: assertNonEmpty(request.cwd, "cwd") }),
         ...(request.model == null ? {} : { model: assertNonEmpty(request.model, "model") }),
+        ...(request.effort == null ? {} : { effort: assertNonEmpty(request.effort, "effort") }),
         ...(request.allow_concurrent === true ? { allow_concurrent: true } : {}),
       } : {}),
       state: "configured",
@@ -221,6 +243,8 @@ export class FrameworkControlPlane {
     if (updated.action === SCHEDULE_ACTIONS.NOTIFY) {
       delete updated.cwd;
       delete updated.model;
+      delete updated.effort;
+      delete updated.profile;
       delete updated.allow_concurrent;
     }
     const scheduleFieldsChanged = patch.at != null
@@ -274,52 +298,239 @@ export class FrameworkControlPlane {
       thread_id: threadId,
       turn_id: turnId,
       target,
-      prompt: assertNonEmpty(request.prompt, "prompt"),
+      prompt_digest: request.prompt_digest || digestPrompt(assertNonEmpty(request.prompt, "prompt")),
       state: "active",
       created_at: request.created_at || new Date().toISOString(),
+      last_seen_at: request.created_at || new Date().toISOString(),
+      ephemeral: request.ephemeral === true,
+      ...(request.profile == null ? {} : { profile: assertNonEmpty(request.profile, "profile") }),
+      ...(request.model == null ? {} : { model: assertNonEmpty(request.model, "model") }),
+      ...(request.effort == null ? {} : { effort: assertNonEmpty(request.effort, "effort") }),
       ...(request.owner_session_id == null ? {} : { owner_session_id: assertNonEmpty(request.owner_session_id, "owner_session_id") }),
       ...(request.schedule_id == null ? {} : { schedule_id: assertNonEmpty(request.schedule_id, "schedule_id") }),
       ...(request.occurrence_id == null ? {} : { occurrence_id: assertNonEmpty(request.occurrence_id, "occurrence_id") }),
+      ...(request.kind == null ? {} : { kind: assertNonEmpty(request.kind, "kind") }),
+      ...(request.review_id == null ? {} : { review_id: assertNonEmpty(request.review_id, "review_id") }),
+      ...(request.source_session_id == null ? {} : { source_session_id: assertNonEmpty(request.source_session_id, "source_session_id") }),
+      ...(request.source_turn_id == null ? {} : { source_turn_id: assertNonEmpty(request.source_turn_id, "source_turn_id") }),
+      ...(request.create_receipt == null ? {} : { create_receipt: clone(request.create_receipt) }),
     };
     this.store.putControl("subagents", subagents);
     return clone(subagents[threadId]);
   }
 
-  async closeSubagent(request) {
+  async createSubagent(request) {
+    if (!this.subagents || typeof this.subagents.createSubagent !== "function") {
+      throw new Error("subagent create requires daemon native create capability");
+    }
+    const target = normalizeTargetScope(request.target);
+    const prompt = assertNonEmpty(request.prompt, "prompt");
+    const attemptId = assertNonEmpty(request.attempt_id || `subagent:${Date.now()}:${process.pid}`, "attempt_id");
+    if (request.profile != null) {
+      throw Object.assign(new Error("subagent profile is not supported by the native App Server create boundary"), {
+        code: "unsupported_profile",
+      });
+    }
+    const receipt = await this.subagents.createSubagent({
+      target,
+      prompt,
+      attempt_id: attemptId,
+      ...(request.cwd == null ? {} : { cwd: assertNonEmpty(request.cwd, "cwd") }),
+      ...(request.model == null ? {} : { model: assertNonEmpty(request.model, "model") }),
+      ...(request.effort == null ? {} : { effort: assertNonEmpty(request.effort, "effort") }),
+      ...(request.ephemeral === true ? { ephemeral: true } : {}),
+    });
+    return this.registerSubagent({
+      thread_id: receipt.thread_id,
+      turn_id: receipt.turn_id,
+      target,
+      prompt,
+      ephemeral: request.ephemeral === true,
+      ...(request.model == null ? {} : { model: request.model }),
+      ...(request.effort == null ? {} : { effort: request.effort }),
+      ...(request.owner_session_id == null ? {} : { owner_session_id: request.owner_session_id }),
+      create_receipt: receipt,
+    });
+  }
+
+  async stopSubagent(request) {
     const threadId = assertNonEmpty(request.thread_id, "thread_id");
     const subagents = this.store.getControl("subagents") || {};
     const subagent = subagents[threadId];
     if (!subagent) throw new Error(`subagent not found: ${threadId}`);
-    if (subagent.state === "closed") return clone(subagent);
+    if (["stopped", "released"].includes(subagent.state)) return clone(subagent);
     if (!this.subagents
       || typeof this.subagents.sessionStatus !== "function"
-      || typeof this.subagents.interruptSubagent !== "function"
-      || typeof this.subagents.archiveSubagent !== "function") {
-      throw new Error("subagent close requires daemon native close capabilities");
+      || typeof this.subagents.interruptSubagent !== "function") {
+      throw new Error("subagent stop requires daemon native stop capabilities");
     }
     const target = {
       ...subagent.target,
       session_id: threadId,
       thread_id: threadId,
     };
-    let interrupted = false;
     const status = await this.subagents.sessionStatus(target);
-    if (status?.state === "working") {
-      await this.subagents.interruptSubagent({ target, thread_id: threadId, turn_id: subagent.turn_id });
-      interrupted = true;
+    const nativeState = status?.state;
+    if (nativeState !== "working") {
+      subagents[threadId] = {
+        ...subagent,
+        state: subagent.ephemeral ? "released" : "stopped",
+        stopped_at: new Date().toISOString(),
+        last_seen_at: new Date().toISOString(),
+        stop_evidence: { state: "no_active_turn", native_state: nativeState },
+      };
+      this.store.putControl("subagents", subagents);
+      return clone(subagents[threadId]);
     }
-    const archived = await this.subagents.archiveSubagent({ target, thread_id: threadId });
+    if (status.active_turn_id != null && status.active_turn_id !== subagent.turn_id) {
+      throw Object.assign(new Error("subagent stop requires the registered live turn"), {
+        code: "subagent_active_turn_mismatch",
+        expected_turn_id: subagent.turn_id,
+        observed_turn_id: status.active_turn_id,
+      });
+    }
+    const receipt = await this.subagents.interruptSubagent({ target, thread_id: threadId, turn_id: subagent.turn_id });
     subagents[threadId] = {
       ...subagent,
-      state: "closed",
-      closed_at: new Date().toISOString(),
-      close_evidence: {
-        interrupted,
-        archive_state: archived.state,
-      },
+      state: subagent.ephemeral ? "released" : "stopped",
+      stopped_at: new Date().toISOString(),
+      last_seen_at: new Date().toISOString(),
+      stop_evidence: receipt,
     };
     this.store.putControl("subagents", subagents);
     return clone(subagents[threadId]);
+  }
+
+  registerLongHorizon(request) {
+    const id = assertNonEmpty(request.id, "id");
+    const mode = assertNonEmpty(request.mode, "mode");
+    if (!["periodic", "goal"].includes(mode)) throw new Error(`unsupported longhorizon mode: ${mode}`);
+    const records = this.store.getControl("longhorizon") || {};
+    const existing = records[id];
+    if (existing) {
+      if (existing.mode !== mode) throw new Error(`longhorizon id is already registered with different mode: ${id}`);
+      return clone(existing);
+    }
+    const record = {
+      id,
+      mode,
+      enabled: false,
+      state: "registered",
+      registered_at: new Date().toISOString(),
+      ...(request.goal_file == null ? {} : { goal_file: assertNonEmpty(request.goal_file, "goal_file") }),
+      ...(request.prompt == null ? {} : { prompt: assertNonEmpty(request.prompt, "prompt") }),
+      ...(request.session == null ? {} : { session: assertNonEmpty(request.session, "session") }),
+      ...(request.interval_ms == null ? {} : { interval_ms: positiveInteger(request.interval_ms, "interval_ms") }),
+      ...(request.owner_session_id == null ? {} : { owner_session_id: assertNonEmpty(request.owner_session_id, "owner_session_id") }),
+      ...(request.review_budget == null ? {} : { review_budget: positiveInteger(request.review_budget, "review_budget") }),
+    };
+    if (mode === "periodic") {
+      if (!record.prompt || !record.session || !record.interval_ms) {
+        throw new Error("periodic longhorizon requires prompt, session, and interval_ms");
+      }
+      const target = this.resolveSessionTarget(record.session);
+      record.target = target;
+      record.owner_session_id = record.owner_session_id || target.thread_id;
+      const schedule = this.upsertSchedule({
+        operation: "schedule.upsert",
+        id: `longhorizon:${id}`,
+        action: SCHEDULE_ACTIONS.NOTIFY,
+        mode: SCHEDULE_MODES.INTERVAL,
+        at: request.at || new Date().toISOString(),
+        interval_ms: record.interval_ms,
+        body: record.prompt,
+        target,
+        send_mode: SEND_MODES.IDLE_ONLY,
+        busy_policy: BUSY_POLICIES.SKIP,
+        owner_session_id: record.owner_session_id || target.thread_id,
+      });
+      this.pauseSchedule({ id: schedule.id });
+      record.schedule_id = schedule.id;
+      record.schedule_state = "disabled";
+    } else {
+      if (!record.goal_file || !record.session) throw new Error("goal longhorizon requires goal_file and session");
+      const target = this.resolveSessionTarget(record.session);
+      record.target = target;
+      record.owner_session_id = record.owner_session_id || target.thread_id;
+      record.review_budget ??= 1;
+      record.review_count ??= 0;
+    }
+    records[id] = record;
+    this.store.putControl("longhorizon", records);
+    this.syncOperatorState(records);
+    return clone(record);
+  }
+
+  setLongHorizonEnabled(request, enabled) {
+    const id = assertNonEmpty(request.id, "id");
+    const records = this.store.getControl("longhorizon") || {};
+    const record = records[id];
+    if (!record) throw new Error(`longhorizon not found: ${id}`);
+    if (record.state === "removed") throw new Error(`longhorizon is removed: ${id}; register it again before activation`);
+    if (record.state === "stopped") throw new Error(`longhorizon is stopped: ${id}; register it again before activation`);
+    if (enabled && record.mode === "periodic" && record.schedule_id) {
+      const schedules = this.store.getControl("schedules") || {};
+      const schedule = schedules[record.schedule_id];
+      if (!schedule) throw new Error(`longhorizon schedule not found: ${record.schedule_id}`);
+      if (isTerminalSchedule(schedule)) {
+        throw new Error(`longhorizon schedule is terminal: ${record.schedule_id}; register it again before activation`);
+      }
+    }
+    records[id] = {
+      ...record,
+      enabled,
+      state: enabled ? "active" : "paused",
+      ...(enabled ? { activated_at: new Date().toISOString() } : { paused_at: new Date().toISOString() }),
+    };
+    this.store.putControl("longhorizon", records);
+    if (record.mode === "periodic" && record.schedule_id) {
+      this.mutate({
+        operation: enabled ? "schedule.resume" : "schedule.pause",
+        id: record.schedule_id,
+      });
+      records[id] = {
+        ...records[id],
+        schedule_state: enabled ? "enabled" : "disabled",
+      };
+      this.store.putControl("longhorizon", records);
+    }
+    this.syncOperatorState(records);
+    return clone(records[id]);
+  }
+
+  stopLongHorizon(request) {
+    const id = assertNonEmpty(request.id, "id");
+    const records = this.store.getControl("longhorizon") || {};
+    const record = records[id];
+    if (!record) throw new Error(`longhorizon not found: ${id}`);
+    records[id] = {
+      ...record,
+      enabled: false,
+      state: "stopped",
+      stopped_at: new Date().toISOString(),
+    };
+    this.store.putControl("longhorizon", records);
+    if (record.mode === "periodic" && record.schedule_id) {
+      const schedules = this.store.getControl("schedules") || {};
+      const schedule = schedules[record.schedule_id];
+      if (schedule && !isTerminalSchedule(schedule)) {
+        this.mutate({ operation: "schedule.stop", id: record.schedule_id });
+      }
+    }
+    this.syncOperatorState(records);
+    return clone(records[id]);
+  }
+
+  removeLongHorizon(request) {
+    const stopped = this.stopLongHorizon(request);
+    const records = this.store.getControl("longhorizon") || {};
+    records[stopped.id] = {
+      ...records[stopped.id],
+      state: "removed",
+      removed_at: new Date().toISOString(),
+    };
+    this.store.putControl("longhorizon", records);
+    return clone(records[stopped.id]);
   }
 
   resolveSessionTarget(alias) {
@@ -328,9 +539,29 @@ export class FrameworkControlPlane {
     if (!bindings[alias]) throw new Error(`session alias is not bound: ${alias}`);
     return bindings[alias].target;
   }
+
+  syncOperatorState(records = this.store.getControl("longhorizon") || {}) {
+    const active = Object.values(records).filter((record) => record?.enabled === true);
+    const schedules = this.store.getControl("schedules") || {};
+    const enabledSchedule = Object.values(schedules).some((schedule) => schedule?.enabled === true);
+    const operators = this.store.getControl("operators") || {};
+    operators.longhorizon = { enabled: active.length > 0 };
+    operators.stopless = { enabled: active.some((record) => record.mode === "goal") };
+    operators.timer = { enabled: active.some((record) => record.mode === "periodic") || enabledSchedule };
+    this.store.putControl("operators", operators);
+  }
 }
 
-const TERMINAL_SCHEDULE_STATES = new Set(["cancelled", "stopped"]);
+function digestPrompt(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function positiveInteger(value, name) {
+  if (!Number.isInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`);
+  return value;
+}
+
+const TERMINAL_SCHEDULE_STATES = new Set(["cancelled", "stopped", "session_missing"]);
 const STOPPABLE_SCHEDULE_STATES = new Set([
   "configured",
   "enabled",
@@ -352,6 +583,7 @@ function normalizeSchedulePatch(request, current) {
   const patch = {};
   const action = request.action ?? current.action ?? SCHEDULE_ACTIONS.NOTIFY;
   if (!Object.values(SCHEDULE_ACTIONS).includes(action)) throw new Error(`unsupported schedule action: ${action}`);
+  assertScheduleActionOptions(action, request);
   if (request.action != null) patch.action = action;
 
   const mode = request.mode ?? current.mode ?? SCHEDULE_MODES.ONCE;
@@ -374,6 +606,10 @@ function normalizeSchedulePatch(request, current) {
     if (!Object.values(SEND_MODES).includes(request.send_mode)) throw new Error(`unsupported send mode: ${request.send_mode}`);
     patch.send_mode = request.send_mode;
   }
+  if (request.busy_policy != null) {
+    if (!Object.values(BUSY_POLICIES).includes(request.busy_policy)) throw new Error(`unsupported busy policy: ${request.busy_policy}`);
+    patch.busy_policy = request.busy_policy;
+  }
   if (request.target != null || request.action != null) {
     const target = request.target ?? current.target;
     patch.target = action === SCHEDULE_ACTIONS.SUBAGENT
@@ -382,6 +618,7 @@ function normalizeSchedulePatch(request, current) {
   }
   if (request.cwd != null) patch.cwd = assertNonEmpty(request.cwd, "cwd");
   if (request.model != null) patch.model = assertNonEmpty(request.model, "model");
+  if (request.effort != null) patch.effort = assertNonEmpty(request.effort, "effort");
   if (request.allow_concurrent != null) {
     if (typeof request.allow_concurrent !== "boolean") throw new Error("allow_concurrent must be boolean");
     patch.allow_concurrent = request.allow_concurrent;
@@ -401,4 +638,20 @@ function normalizeSchedulePatch(request, current) {
     throw new Error("recurring subagent schedules require allow_concurrent: true");
   }
   return patch;
+}
+
+function assertScheduleActionOptions(action, request) {
+  if (action === SCHEDULE_ACTIONS.SUBAGENT) {
+    if (request.profile != null) {
+      throw Object.assign(new Error("schedule subagent profile is not supported by the native App Server create boundary"), {
+        code: "unsupported_profile",
+      });
+    }
+    return;
+  }
+  const subagentOnlyFields = ["cwd", "model", "effort", "profile", "allow_concurrent"]
+    .filter((field) => request[field] != null);
+  if (subagentOnlyFields.length > 0) {
+    throw new Error(`schedule fields require action=subagent: ${subagentOnlyFields.join(", ")}`);
+  }
 }

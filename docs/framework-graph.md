@@ -1,7 +1,8 @@
 # RouteCodex Hooks Framework Graph
 
-This is a capability skeleton. It defines the graph and evidence boundaries;
-it does not enable Stopless, scheduling, memory, or goal mutation policy.
+This is the Stage 2 lifecycle graph. It defines the implemented schedule,
+delivery, subagent, Stopless goal-review, and LongHorizon boundaries. Tool
+policy, request augmentation, and memory remain outside this implementation.
 
 ## Invariants
 
@@ -12,9 +13,8 @@ it does not enable Stopless, scheduling, memory, or goal mutation policy.
 5. The daemon owns policy state, idempotency, persistence, status gating, and
    delivery decisions.
 6. `codexapp` owns Codex TUI/Desktop App Server communication and status
-   observation. It is planned as an independent internal binary in the
-   RouteCodex distribution, not a provider protocol feature; this skeleton
-   supplies only its typed port boundary.
+   observation. It is an independent internal binary in the RouteCodex
+   distribution, not a provider protocol feature.
 7. `codexapp.sendmessage` is the only wake action.
 8. Every message intent declares one of:
    `idle_only` (do not disturb a working object) or `working_allowed`.
@@ -29,15 +29,15 @@ The graph is intentionally split into three evidence classes:
 
 - **Implemented baseline**: event normalization, hook-kind routing, status and
   input gating, idempotency, JSON persistence, outbox recovery, external Stop
-  output, session-bound timer delivery, operator-slot query, and exact delivery
-  evidence progression.
-- **Contract-only**: Stopless, update-goal policy decisions, long-horizon,
-  memory, native Stop continuation, and recurring scheduling policy. Their
-  slots and boundaries exist, but no business operator is enabled.
-- **Real-runtime pending**: CodexApp TUI/Desktop App Server handshake, native
-  delivery/read/consumption receipts, plugin trust approval, and RouteCodex
-  managed sidecar startup. Mock ports and HTTP responses cannot promote these
-  edges to native evidence.
+  output, one-shot/recurring timer delivery, subagent create/list/stop,
+  LongHorizon registration/control, Stopless goal review, operator-slot query,
+  and exact delivery evidence progression.
+- **Boundary only**: update-goal mutation, memory, native Stop continuation,
+  tool-call policy, and request/schema injection. Their ownership boundaries
+  are explicit; no implementation is claimed here.
+- **Real-runtime pending**: RouteCodex managed sidecar startup and any live
+  evidence not recorded in the acceptance matrix. Mock ports and HTTP
+  responses cannot promote those edges to native evidence.
 
 ## Complete framework graph
 
@@ -134,12 +134,13 @@ promoted by a log line, MCP read, or queue insertion alone.
 - Timer/longhorizon: daemon-originated intent, not a fake Hook event. It wakes
   only by calling `codexapp.sendmessage` after the same status gate.
 
-## Evidence ceiling of this skeleton
+## Evidence ceiling
 
-The tests prove the local HTTP adapter, daemon status gate, mock codexapp
-port, Stop result shape, deferral/resume, idempotency, and hook-kind
-separation. They do not prove a real TUI/Desktop App Server, plugin trust
-approval, production daemon persistence, or RouteCodex managed startup.
+The tests prove the local HTTP adapter, daemon status gate, typed codexapp
+port, native adapter fixtures, Stop result shape, deferral/resume,
+idempotency, hook-kind separation, timer CRUD, subagent stop, and goal-review
+policy. They do not by themselves prove RouteCodex managed startup or a live
+replay; those remain separate acceptance evidence.
 
 ## Lifecycle coverage contract
 
@@ -158,23 +159,23 @@ idempotency, and an observe-only decision:
 | `PreCompact` | `input` | observe before compaction |
 | `PostCompact` | `input` | observe and reconcile |
 | `SubagentStop` | `stop` | observe official stop boundary |
-| `Stop` | `stop` | observe; future independent Stopless policy |
+| `Stop` | `stop` | observe; eligible goal review is disabled until LongHorizon activation |
 | `Interrupt` | `lifecycle` | record interruption and reconcile |
 | `SessionEnd` | `lifecycle` | flush durable state and close session |
 
-The baseline has no enabled policy factory for these events. Supplying an
-intent explicitly in a contract test exercises the daemon transport path; it
-does not enable a product operator.
+The baseline has no enabled policy factory until a LongHorizon record is
+activated. Supplying an intent explicitly in a contract test exercises the
+daemon transport path; it does not enable a product operator.
 
 ## Complete operator graph
 
 ```mermaid
 flowchart LR
   E[normalized official event] --> O{operator registry}
-  O --> S[StoplessOperator\nindependent state]
+  O --> S[GoalReviewRunner\nStopless independent state]
   O --> G[UpdateGoalOperator\nindependent state]
-  O --> T[TimerOperator\nfuture clock state]
-  O --> L[LongHorizonOperator\nfuture checkpoint state]
+  O --> T[TimerOperator\npersisted clock state]
+  O --> L[LongHorizon\nperiodic/goal state]
   O --> M[MemoryOperator\nextension only]
   S --> D[typed daemon decision]
   G --> D

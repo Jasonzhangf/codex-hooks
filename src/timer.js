@@ -2,6 +2,7 @@ import {
   clone,
   normalizeTarget,
   normalizeTargetScope,
+  BUSY_POLICIES,
   SCHEDULE_ACTIONS,
   SCHEDULE_MODES,
   SEND_MODES,
@@ -36,11 +37,12 @@ export class ManualClock {
   }
 }
 
-const TERMINAL_SCHEDULE_STATES = new Set(["cancelled", "stopped", "disabled", "failed", "sent", "completed", "unknown_delivery"]);
-const OCCURRENCE_TERMINAL_STATES = new Set(["sent", "completed", "unknown_delivery", "failed"]);
+const TERMINAL_SCHEDULE_STATES = new Set(["cancelled", "stopped", "disabled", "failed", "sent", "completed", "unknown_delivery", "skipped", "session_missing"]);
+const OCCURRENCE_TERMINAL_STATES = new Set(["sent", "completed", "unknown_delivery", "failed", "skipped", "session_missing"]);
+const SESSION_MISSING_CODES = new Set(["session_not_found", "target_scope_not_found"]);
 
 export class TimerOperator {
-  constructor({ store, dispatch, resume = null, createSubagent = null, registerSubagent = null, clock = new SystemClock() }) {
+  constructor({ store, dispatch, resume = null, createSubagent = null, registerSubagent = null, sessionStatus = null, clock = new SystemClock() }) {
     if (!store || typeof store.getControl !== "function" || typeof store.putControl !== "function") {
       throw new Error("timer operator requires a control state store");
     }
@@ -51,6 +53,7 @@ export class TimerOperator {
     this.resume = resume;
     this.createSubagent = createSubagent;
     this.registerSubagent = registerSubagent;
+    this.sessionStatus = sessionStatus;
     this.clock = clock;
   }
 
@@ -83,6 +86,31 @@ export class TimerOperator {
       this.updateSchedule(schedules, schedule, { state: "due", due_at: this.clock.now(), current_occurrence: occurrenceId });
       this.updateSchedule(schedules, schedule, { state: "claimed", claimed_at: this.clock.now(), current_occurrence: occurrenceId });
       try {
+        if (schedule.busy_policy === BUSY_POLICIES.SKIP) {
+          const target = normalizeTarget(schedule.target);
+          if (typeof this.sessionStatus !== "function") {
+            throw Object.assign(new Error("busy_policy=skip requires a session status function"), {
+              code: "session_status_capability_missing",
+            });
+          }
+          const status = await this.sessionStatus(target);
+          const state = typeof status === "string" ? status : status?.state;
+          if (state === "working") {
+            this.finishOccurrence(schedules, schedule, occurrence, {
+              state: "skipped",
+              skipped_at: this.clock.now(),
+              last_decision: "skipped",
+            });
+            results.push({
+              schedule_id: schedule.id,
+              occurrence_id: occurrenceId,
+              action,
+              at,
+              result: { decision: "skipped", state },
+            });
+            continue;
+          }
+        }
         this.updateSchedule(schedules, schedule, { state: "send_pending", send_pending_at: this.clock.now() });
         const result = action === SCHEDULE_ACTIONS.SUBAGENT
           ? await this.dispatchSubagent(schedule, occurrenceId, at)
@@ -93,6 +121,8 @@ export class TimerOperator {
             ? "deferred_while_working"
             : result.decision === "unknown_delivery"
               ? "unknown_delivery"
+              : SESSION_MISSING_CODES.has(result.error?.code)
+                ? "session_missing"
               : "failed";
         this.finishOccurrence(schedules, schedule, occurrence, {
           state,
@@ -101,8 +131,9 @@ export class TimerOperator {
         });
         results.push({ schedule_id: schedule.id, occurrence_id: occurrenceId, action, at, result });
       } catch (error) {
+        const failedState = SESSION_MISSING_CODES.has(error.code) ? "session_missing" : "failed";
         this.finishOccurrence(schedules, schedule, occurrence, {
-          state: "failed",
+          state: failedState,
           failure: { code: error.code || "timer_dispatch_failed", message: error.message },
           ...(error.subagent_receipt == null ? {} : { last_delivery: clone(error.subagent_receipt) }),
         });
@@ -138,6 +169,7 @@ export class TimerOperator {
       target,
       body: schedule.body,
       send_mode: schedule.send_mode || SEND_MODES.IDLE_ONLY,
+      busy_policy: schedule.busy_policy || BUSY_POLICIES.DEFER,
       event_key: occurrenceId,
       expires_at: schedule.expires_at || null,
     });
@@ -158,6 +190,7 @@ export class TimerOperator {
       scheduled_at: at,
       ...(schedule.cwd == null ? {} : { cwd: schedule.cwd }),
       ...(schedule.model == null ? {} : { model: schedule.model }),
+      ...(schedule.effort == null ? {} : { effort: schedule.effort }),
     });
     if (typeof this.registerSubagent === "function") {
       try {
@@ -167,6 +200,8 @@ export class TimerOperator {
           target,
           prompt: schedule.body,
           ...(schedule.owner_session_id == null ? {} : { owner_session_id: schedule.owner_session_id }),
+          ...(schedule.model == null ? {} : { model: schedule.model }),
+          ...(schedule.effort == null ? {} : { effort: schedule.effort }),
           schedule_id: schedule.id,
           occurrence_id: occurrenceId,
           created_at: at,
@@ -210,8 +245,19 @@ export class TimerOperator {
       return;
     }
     const mode = schedule.mode || SCHEDULE_MODES.ONCE;
-    const terminal = patch.state === "sent" || patch.state === "unknown_delivery" || patch.state === "failed";
+    const terminal = ["sent", "unknown_delivery", "failed", "skipped", "session_missing"].includes(patch.state);
     if (mode === SCHEDULE_MODES.INTERVAL && terminal) {
+      if (patch.state === "session_missing") {
+        this.updateSchedule(schedules, schedule, {
+          ...patch,
+          state: "session_missing",
+          enabled: false,
+          current_occurrence: occurrence.occurrenceId,
+          last_occurrence: occurrence.occurrenceId,
+          stopped_at: this.clock.now(),
+        });
+        return;
+      }
       const intervalMs = schedule.interval_ms;
       const base = Date.parse(occurrence.at);
       const now = Date.parse(this.clock.now());

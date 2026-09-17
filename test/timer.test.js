@@ -28,7 +28,7 @@ function app(state = "idle") {
   };
 }
 
-function setup({ state = "idle", store = new MemoryStateStore(), sendMode = SEND_MODES.IDLE_ONLY } = {}) {
+function setup({ state = "idle", store = new MemoryStateStore(), sendMode = SEND_MODES.IDLE_ONLY, busyPolicy = "defer" } = {}) {
   const codexapp = app(state);
   const daemon = new HooksDaemon({ codexapp, store });
   const control = new FrameworkControlPlane({ store });
@@ -40,6 +40,7 @@ function setup({ state = "idle", store = new MemoryStateStore(), sendMode = SEND
     body: "timer wake",
     target: TARGET,
     send_mode: sendMode,
+    busy_policy: busyPolicy,
   });
   return { codexapp, daemon, control, store };
 }
@@ -99,6 +100,54 @@ test("working_allowed timer explicitly sends while working", async () => {
   const result = await timer.tick();
   assert.equal(result[0].result.decision, "sent");
   assert.equal(codexapp.sends.length, 1);
+});
+
+test("busy_policy=skip records one skipped occurrence without queueing a backlog", async () => {
+  const { codexapp, daemon, store } = setup({ state: "working", busyPolicy: "skip" });
+  const schedules = store.getControl("schedules");
+  schedules["daily-check"] = {
+    ...schedules["daily-check"],
+    mode: "interval",
+    interval_ms: 60_000,
+    next_at: "2026-09-11T10:00:00.000Z",
+  };
+  store.putControl("schedules", schedules);
+  const clock = new ManualClock("2026-09-11T10:03:00.000Z");
+  const timer = new TimerOperator({
+    store,
+    clock,
+    sessionStatus: (target) => daemon.sessionStatus(target),
+    dispatch: (intent) => daemon.dispatchIntent(intent, { kind: "timer" }),
+    resume: (target) => daemon.flushPending(target),
+  });
+
+  const result = await timer.tick();
+  assert.equal(result[0].result.decision, "skipped");
+  assert.equal(codexapp.sends.length, 0);
+  const persisted = store.getControl("schedules")["daily-check"];
+  assert.equal(persisted.state, "enabled");
+  assert.equal(persisted.last_decision, "skipped");
+  assert.equal(persisted.next_at, "2026-09-11T10:04:00.000Z");
+  assert.deepEqual(await timer.tick(), []);
+  assert.equal(codexapp.sends.length, 0);
+});
+
+test("stopping a deferred schedule prevents its later idle flush", async () => {
+  const { codexapp, daemon, control, store } = setup({ state: "working" });
+  const clock = new ManualClock("2026-09-11T10:00:00.000Z");
+  const timer = new TimerOperator({
+    store,
+    clock,
+    dispatch: (intent) => daemon.dispatchIntent(intent, { kind: "timer" }),
+    resume: (target) => daemon.flushPending(target),
+  });
+
+  assert.equal((await timer.tick())[0].result.decision, "deferred");
+  control.mutate({ operation: "schedule.stop", id: "daily-check" });
+  codexapp.state = "idle";
+  assert.deepEqual(await timer.tick(), []);
+  assert.equal(codexapp.sends.length, 0);
+  assert.equal(store.getControl("schedules")["daily-check"].state, "stopped");
 });
 
 test("timer preserves unknown delivery as unresolved and never retries blindly", async () => {
@@ -273,8 +322,11 @@ test("subagent schedule invokes native create once and records thread and turn r
     body: "run the task",
     target: { namespace: "codex_tui", appserver_id: "tui-appserver", scope_id: "local:tui" },
     cwd: "/tmp",
+    model: "test-model",
+    effort: "high",
   });
   const created = [];
+  const registered = [];
   const timer = new TimerOperator({
     store,
     clock: new ManualClock("2026-09-11T10:00:00.000Z"),
@@ -282,6 +334,10 @@ test("subagent schedule invokes native create once and records thread and turn r
     createSubagent: async (request) => {
       created.push(request);
       return { thread_id: "thread-new", turn_id: "turn-new" };
+    },
+    registerSubagent: async (request) => {
+      registered.push(request);
+      return request;
     },
   });
 
@@ -294,7 +350,11 @@ test("subagent schedule invokes native create once and records thread and turn r
     attempt_id: "timer:spawn-once:2026-09-11T10:00:00.000Z",
     scheduled_at: "2026-09-11T10:00:00.000Z",
     cwd: "/tmp",
+    model: "test-model",
+    effort: "high",
   }]);
+  assert.equal(registered[0].model, "test-model");
+  assert.equal(registered[0].effort, "high");
   const persisted = store.getControl("schedules")["spawn-once"];
   assert.equal(persisted.state, "sent");
   assert.equal(persisted.last_delivery.thread_id, "thread-new");

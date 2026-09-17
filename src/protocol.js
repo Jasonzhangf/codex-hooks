@@ -58,6 +58,17 @@ export const SEND_MODES = Object.freeze({
   WORKING_ALLOWED: "working_allowed",
 });
 
+export const BUSY_POLICIES = Object.freeze({
+  DEFER: "defer",
+  SKIP: "skip",
+});
+
+export const SEND_OPERATIONS = Object.freeze({
+  QUEUE: "queue",
+  STEER: "steer",
+  INTERRUPT: "interrupt",
+});
+
 export const SCHEDULE_ACTIONS = Object.freeze({
   NOTIFY: "notify",
   SUBAGENT: "subagent",
@@ -166,12 +177,16 @@ export function normalizeSessionObservation(value) {
   const state = typeof value === "string"
     ? value
     : value?.state || value?.status?.type;
-  if (!SESSION_STATES.includes(state)) return { state: "unknown", input_active: false };
+  if (!SESSION_STATES.includes(state)) return { state: "unknown", input_active: false, active_turn_id: null };
+  const activeTurnId = typeof value === "object" && value !== null
+    ? value.active_turn_id ?? value.status?.active_turn_id ?? null
+    : null;
   return {
     state,
     input_active: typeof value === "object" && value !== null && (
       value.input_active === true || value.status?.input_active === true
     ),
+    active_turn_id: activeTurnId,
   };
 }
 
@@ -230,6 +245,14 @@ export function normalizeIntent(value) {
   if (!Object.values(SEND_MODES).includes(mode)) throw new Error(`unsupported send mode: ${mode}`);
   const source = assertNonEmpty(value.source, "source");
   if (!MESSAGE_SOURCES.includes(source)) throw new Error(`unsupported message source: ${source}`);
+  const busyPolicy = value.busy_policy || BUSY_POLICIES.DEFER;
+  if (!Object.values(BUSY_POLICIES).includes(busyPolicy)) throw new Error(`unsupported busy policy: ${busyPolicy}`);
+  const operation = value.operation || SEND_OPERATIONS.QUEUE;
+  if (!Object.values(SEND_OPERATIONS).includes(operation)) throw new Error(`unsupported send operation: ${operation}`);
+  const turnId = value.turn_id == null ? null : assertNonEmpty(value.turn_id, "turn_id");
+  if ([SEND_OPERATIONS.STEER, SEND_OPERATIONS.INTERRUPT].includes(operation) && turnId == null) {
+    throw new Error(`${operation} operation requires turn_id`);
+  }
   const expiresAt = value.expires_at == null ? null : assertNonEmpty(value.expires_at, "expires_at");
   if (expiresAt && Number.isNaN(Date.parse(expiresAt))) throw new Error("expires_at must be an ISO timestamp");
   return {
@@ -238,6 +261,9 @@ export function normalizeIntent(value) {
     target: normalizeTarget(value.target),
     body: assertNonEmpty(value.body, "body"),
     send_mode: mode,
+    busy_policy: busyPolicy,
+    operation,
+    turn_id: turnId,
     event_key: assertNonEmpty(value.event_key, "event_key"),
     expires_at: expiresAt,
   };
@@ -250,6 +276,10 @@ export function eventKey(event, kind) {
     ? event.tool_use_id
     : (event.event_id || event.agent_id || event.source || event.trigger || event.reason || "no-invocation");
   return [event.session_id, event.turn_id || "no-turn", event.hook_event_name, kind, invocationId].join("/");
+}
+
+export function interruptSuppressionKey(sessionId, turnId = null) {
+  return `${assertNonEmpty(sessionId, "session_id")}:${turnId == null ? "*" : assertNonEmpty(turnId, "turn_id")}`;
 }
 
 export function clone(value) {

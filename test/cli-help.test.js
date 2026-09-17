@@ -30,6 +30,7 @@ test("rccs help documents defaults and state semantics", async () => {
     "default idle_only",
     "default defer",
     "default notify",
+    "optional assertion; subagent schedules always use an ephemeral thread",
     "--once and --every are mutually exclusive",
     "stop is terminal",
   ]) {

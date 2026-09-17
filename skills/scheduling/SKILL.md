@@ -38,7 +38,7 @@ rccs schedule add recurring-1 <at-iso8601> '<body>' --session timer-tui --every 
 | `--cwd <absolute-path>` | native default | Child working directory. |
 | `--model <model>` | native default | Explicit child model override. |
 | `--effort <effort>` | native default | Explicit child effort override. |
-| `--ephemeral` | required for subagent | Disposable native thread; subagent schedules always use this. |
+| `--ephemeral` | optional for subagent | Explicit assertion that the native thread is disposable; subagent schedules always use an ephemeral thread. |
 | `--allow-concurrent` | false | Required for recurring subagent creation. |
 | `--owner-session <session-id>` | current session when available | Scope used by list/stop controls. |
 | `--profile <profile>` | rejected | Native `thread/start` has no Codex profile selector; rejection is explicit. |

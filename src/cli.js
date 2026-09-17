@@ -494,7 +494,7 @@ options:
   --profile <profile>            rejected: native create_subagent has no profile selector
   --model <model>                subagent model override
   --effort <effort>              subagent effort override
-  --ephemeral                    required for subagent schedules; native ephemeral thread
+  --ephemeral                    optional assertion; subagent schedules always use an ephemeral thread
   --allow-concurrent             required for recurring subagent schedules
   --owner-session <session-id>   ownership scope for list/stop
 

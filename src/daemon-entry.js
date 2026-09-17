@@ -24,6 +24,7 @@ const timer = new TimerOperator({
   store: daemon.store,
   dispatch: (intent) => daemon.dispatchIntent(intent, { kind: "timer" }),
   resume: (target) => daemon.flushPending(target),
+  createSubagent: (request) => daemon.createSubagent(request),
 });
 const server = new DaemonHttpServer(daemon);
 const host = normalizeLoopbackHost(options.host || config?.runtime.host || "127.0.0.1");

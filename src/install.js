@@ -5,7 +5,7 @@ import { normalizeLoopbackEndpoint } from "./endpoint.js";
 
 export const INSTALL_SCHEMA_VERSION = 1;
 export const INSTALL_DIRNAME = "routecodex-hooks";
-export const MANAGED_HOOK_ID = "routecodex-hooks.stop.v1";
+export const MANAGED_HOOK_ID = "rccs.stop.v1";
 
 export function installPaths({ codexHome = join(homedir(), ".codex"), binDir = join(homedir(), ".local", "bin") } = {}) {
   const home = resolve(codexHome);
@@ -24,6 +24,7 @@ export function installPaths({ codexHome = join(homedir(), ".codex"), binDir = j
     skillsDirectory: join(home, "skills"),
     binDirectory: resolve(binDir),
     cliWrapper: join(resolve(binDir), "routecodex-hooks"),
+    rccsWrapper: join(resolve(binDir), "rccs"),
     mcpWrapper: join(resolve(binDir), "routecodex-hooks-mcp"),
     daemonWrapper: join(resolve(binDir), "routecodex-hooksd"),
     supervisorWrapper: join(resolve(binDir), "routecodex-hooks-supervisor"),
@@ -61,6 +62,7 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
   const daemonConfig = buildDaemonConfig({ paths, endpoint: normalizedEndpoint, previous: readJsonIfExists(previous?.daemon_config), supervisorEnabled });
   writeJson(paths.daemonConfig, daemonConfig);
   writeExecutable(paths.cliWrapper, wrapperSource(paths.sourceDirectory, "cli.js", paths.installRecord));
+  writeExecutable(paths.rccsWrapper, wrapperSource(paths.sourceDirectory, "cli.js", paths.installRecord));
   writeExecutable(paths.mcpWrapper, wrapperSource(paths.sourceDirectory, "mcp-server.js", paths.installRecord));
   writeExecutable(paths.daemonWrapper, wrapperSource(paths.sourceDirectory, "daemon-entry.js", paths.installRecord));
   writeExecutable(paths.supervisorWrapper, wrapperSource(paths.sourceDirectory, "supervisor-entry.js", paths.installRecord));
@@ -87,6 +89,7 @@ export function installFromSource({ sourceRoot, codexHome, binDir, endpoint = "h
     managed_hook_commands: [hookCommand],
     bin_directory: paths.binDirectory,
     cli_wrapper: paths.cliWrapper,
+    rccs_wrapper: paths.rccsWrapper,
     mcp_wrapper: paths.mcpWrapper,
     daemon_wrapper: paths.daemonWrapper,
     supervisor_wrapper: paths.supervisorWrapper,

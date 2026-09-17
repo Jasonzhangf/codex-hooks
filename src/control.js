@@ -1,4 +1,12 @@
-import { assertNonEmpty, clone, normalizeTarget, SEND_MODES } from "./protocol.js";
+import {
+  assertNonEmpty,
+  clone,
+  normalizeTarget,
+  normalizeTargetScope,
+  SCHEDULE_ACTIONS,
+  SCHEDULE_MODES,
+  SEND_MODES,
+} from "./protocol.js";
 
 export const OPERATOR_REGISTRY = Object.freeze([
   { name: "stopless", hook_kinds: ["stop"], state_resource: "stopless_state", status: "contract-only" },
@@ -75,27 +83,67 @@ export class FrameworkControlPlane {
   }
 
   addSchedule(request) {
-    const alias = assertNonEmpty(request.session, "session");
-    const bindings = this.store.getControl("session_bindings") || {};
-    const binding = bindings[alias];
-    if (!binding) throw new Error(`session alias is not bound: ${alias}`);
-    const schedule = this.upsertSchedule({ ...request, target: binding.target });
+    const action = request.action || SCHEDULE_ACTIONS.NOTIFY;
+    let alias = null;
+    let target = request.target;
+    if (action === SCHEDULE_ACTIONS.NOTIFY) {
+      alias = assertNonEmpty(request.session, "session");
+      const bindings = this.store.getControl("session_bindings") || {};
+      const binding = bindings[alias];
+      if (!binding) throw new Error(`session alias is not bound: ${alias}`);
+      target = binding.target;
+    } else if (action !== SCHEDULE_ACTIONS.SUBAGENT) {
+      throw new Error(`unsupported schedule action: ${action}`);
+    }
+    const schedule = this.upsertSchedule({ ...request, action, target });
     const operators = this.store.getControl("operators") || {};
     operators.timer = { enabled: true };
     this.store.putControl("operators", operators);
-    return { ...schedule, session: alias, timer_enabled: true };
+    return { ...schedule, ...(alias == null ? {} : { session: alias }), timer_enabled: true };
   }
 
   upsertSchedule(request) {
     const id = assertNonEmpty(request.id, "id");
+    const action = request.action || SCHEDULE_ACTIONS.NOTIFY;
+    if (!Object.values(SCHEDULE_ACTIONS).includes(action)) throw new Error(`unsupported schedule action: ${action}`);
+    const mode = request.mode || SCHEDULE_MODES.ONCE;
+    if (!Object.values(SCHEDULE_MODES).includes(mode)) throw new Error(`unsupported schedule mode: ${mode}`);
     const at = assertNonEmpty(request.at, "at");
-    const target = normalizeTarget(request.target);
     const body = assertNonEmpty(request.body, "body");
     const sendMode = request.send_mode || SEND_MODES.IDLE_ONLY;
     if (!Object.values(SEND_MODES).includes(sendMode)) throw new Error(`unsupported send mode: ${sendMode}`);
     if (Number.isNaN(Date.parse(at))) throw new Error("schedule time must be an ISO timestamp");
+    if (mode === SCHEDULE_MODES.INTERVAL) {
+      if (!Number.isInteger(request.interval_ms) || request.interval_ms < 1) {
+        throw new Error("schedule interval_ms must be a positive integer");
+      }
+    } else if (request.interval_ms != null) {
+      throw new Error("schedule interval_ms is only valid for interval mode");
+    }
+    if (action === SCHEDULE_ACTIONS.SUBAGENT && mode === SCHEDULE_MODES.INTERVAL && request.allow_concurrent !== true) {
+      throw new Error("recurring subagent schedules require allow_concurrent: true");
+    }
+    const target = action === SCHEDULE_ACTIONS.SUBAGENT
+      ? normalizeTargetScope(request.target)
+      : normalizeTarget(request.target);
     const schedules = this.store.getControl("schedules") || {};
-    schedules[id] = { id, at, target, body, send_mode: sendMode, state: "configured", enabled: true };
+    schedules[id] = {
+      id,
+      action,
+      mode,
+      at,
+      ...(mode === SCHEDULE_MODES.INTERVAL ? { interval_ms: request.interval_ms } : {}),
+      target,
+      body,
+      send_mode: sendMode,
+      ...(action === SCHEDULE_ACTIONS.SUBAGENT ? {
+        ...(request.cwd == null ? {} : { cwd: assertNonEmpty(request.cwd, "cwd") }),
+        ...(request.model == null ? {} : { model: assertNonEmpty(request.model, "model") }),
+        ...(request.allow_concurrent === true ? { allow_concurrent: true } : {}),
+      } : {}),
+      state: "configured",
+      enabled: true,
+    };
     this.store.putControl("schedules", schedules);
     return clone(schedules[id]);
   }

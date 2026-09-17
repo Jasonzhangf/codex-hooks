@@ -95,22 +95,32 @@ Bundled plugin hooks resolve the same default install record at
 the plugin hook manifest. The installed managed Stop hook passes its own
 install record explicitly, including for isolated `--codex-home` installs.
 
-The installed CLI owns configuration and switches:
+The installed `rccs` CLI owns configuration and switches. The longer
+`routecodex-hooks` command remains as a compatibility alias:
 
 ```bash
-routecodex-hooks config-show
-routecodex-hooks config-set endpoint http://127.0.0.1:8787
-routecodex-hooks config-set target '{"namespace":"codex_tui","appserver_id":"tui-appserver","scope_id":"local:tui","endpoint":"unix:///path/to/app-server-control.sock"}'
-routecodex-hooks session-bind timer-tui <session-id>
-routecodex-hooks schedule-add wake-1 2026-09-16T12:00:00Z 'wake body' --session timer-tui
-routecodex-hooks hook-disable stop
-routecodex-hooks hook-enable stop
+rccs config show
+rccs config set endpoint http://127.0.0.1:8787
+rccs config set target '{"namespace":"codex_tui","appserver_id":"tui-appserver","scope_id":"local:tui","endpoint":"unix:///path/to/app-server-control.sock"}'
+rccs session bind timer-tui <session-id>
+rccs schedule add wake-1 2026-09-16T12:00:00Z 'wake body' --session timer-tui
+rccs schedule add recurring-1 2026-09-16T12:00:00Z 'wake body' --session timer-tui --every 5m
+rccs schedule add subagent-1 2026-09-16T12:00:00Z 'run task' --action subagent --target codex_tui/tui-appserver
+rccs hook disable stop
+rccs hook enable stop
 ```
 
-`session-bind` persists the alias-to-target mapping in hooksd; `schedule-add`
-resolves that alias and enables the timer operator. The daemon ticks once per
-second and sends due schedules through the same status gate as every other
-intent. `idle_only` remains the default.
+`rccs session bind` persists the alias-to-target mapping in hooksd;
+`rccs schedule add` resolves that alias and enables the timer operator. The
+daemon ticks once per second and sends due notifications through the same
+status gate as every other intent. `idle_only` remains the default.
+`--every <duration>` creates a recurring notification. Missed occurrences are
+coalesced, so daemon downtime or a busy target does not produce a burst.
+
+`--action subagent` uses the native Codex App Server `thread/start` and
+`turn/start` operations to create and run a new subagent task. It requires a
+configured target scope instead of a session binding. Recurring subagent
+creation requires explicit `--allow-concurrent`.
 
 The installed MCP wrapper is read-only. Register it once with
 `codex mcp add routecodex-hooks -- routecodex-hooks-mcp` and use its

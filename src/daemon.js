@@ -117,6 +117,15 @@ export class HooksDaemon {
     return this.dispatch({ hook_event_name: `daemon:${kind}` }, kind, intent);
   }
 
+  async createSubagent(request) {
+    if (typeof this.codexapp.create_subagent !== "function") {
+      throw Object.assign(new Error("codexapp does not provide subagent creation"), {
+        code: "subagent_capability_missing",
+      });
+    }
+    return this.codexapp.create_subagent(request);
+  }
+
   async processHook(event, hookKind, key, rawIntent) {
     if (hookKind === "stop" && event.stop_hook_active) {
       const result = this.result(event, hookKind, "guarded", { delivery: null, guard: "stop_hook_active" });

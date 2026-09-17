@@ -23,6 +23,7 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
     assert.equal(first.source_root, process.cwd());
     assert.equal(fs.existsSync(join(first.source_directory, "hook-entry.js")), true);
     assert.equal(fs.existsSync(join(first.skills_directory, "routecodex-hooks", "SKILL.md")), true);
+    assert.equal(fs.statSync(first.rccs_wrapper).mode & 0o111, 0o111);
     assert.equal(fs.statSync(first.cli_wrapper).mode & 0o111, 0o111);
     assert.equal(fs.statSync(first.mcp_wrapper).mode & 0o111, 0o111);
     assert.equal(fs.statSync(first.daemon_wrapper).mode & 0o111, 0o111);
@@ -33,6 +34,7 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
       await readFile(join(process.cwd(), "skills", "routecodex-hooks", "SKILL.md"), "utf8"),
     );
     assert.equal((await readFile(first.cli_wrapper, "utf8")).includes(first.source_directory), true);
+    assert.equal((await readFile(first.rccs_wrapper, "utf8")).includes(first.source_directory), true);
     const daemonConfig = loadDaemonConfig(first.daemon_config);
     assert.equal(daemonConfig.supervisor.enabled, false);
     assert.equal(daemonConfig.supervisor.codexapp.command, first.codexapp_wrapper);
@@ -202,12 +204,12 @@ test("installed CLI binds a session and schedules a timer through the live daemo
     assert.equal(ready.ready, true);
 
     const threadId = "01a0acc8-e48a-71d1-bcd7-7427e67252a5";
-    const bound = await run(receipt.cli_wrapper, ["session-bind", "timer-tui", threadId]);
+    const bound = await run(receipt.rccs_wrapper, ["session", "bind", "timer-tui", threadId]);
     assert.equal(bound.code, 0, bound.stderr);
     assert.equal(JSON.parse(bound.stdout).target.thread_id, threadId);
 
     const at = new Date(Date.now() - 1000).toISOString();
-    const scheduled = await run(receipt.cli_wrapper, ["schedule-add", "cli-timer", at, "timer wake", "--session", "timer-tui"]);
+    const scheduled = await run(receipt.rccs_wrapper, ["schedule", "add", "cli-timer", at, "timer wake", "--session", "timer-tui"]);
     assert.equal(scheduled.code, 0, scheduled.stderr);
     assert.equal(JSON.parse(scheduled.stdout).session, "timer-tui");
 
@@ -220,11 +222,70 @@ test("installed CLI binds a session and schedules a timer through the live daemo
     assert.deepEqual(bridge.sends[0].body, "timer wake");
     assert.equal(bridge.sends[0].attemptId.startsWith("timer:cli-timer:"), true);
 
-    const status = await run(receipt.cli_wrapper, ["status"]);
+    const status = await run(receipt.rccs_wrapper, ["status"]);
     assert.equal(status.code, 0, status.stderr);
     const state = JSON.parse(status.stdout).control.state;
     assert.equal(state.session_bindings["timer-tui"].target.thread_id, threadId);
     assert.equal(state.schedules["cli-timer"].state, "sent");
+  } finally {
+    if (daemon) {
+      daemon.kill("SIGTERM");
+      await once(daemon, "exit");
+    }
+    if (bridge) await new Promise((resolve) => bridge.close(resolve));
+    await rm(codexHome, { recursive: true, force: true });
+  }
+});
+
+test("rccs installs and creates a recurring notification schedule through the live daemon", async () => {
+  const codexHome = await mkdtemp(join(tmpdir(), "rccs-recurring-cli-"));
+  const binDir = join(codexHome, "bin");
+  const port = await freePort();
+  let daemon = null;
+  let bridge = null;
+  try {
+    const init = await run(process.execPath, ["scripts/init.mjs", "--codex-home", codexHome, "--bin-dir", binDir, "--endpoint", `http://127.0.0.1:${port}`]);
+    assert.equal(init.code, 0, init.stderr);
+    const receipt = JSON.parse(init.stdout);
+    const target = {
+      namespace: "codex_tui",
+      appserver_id: "tui-appserver",
+      scope_id: "local:tui",
+      endpoint: "unix:///tmp/tui-appserver.sock",
+    };
+    assert.equal((await run(receipt.rccs_wrapper, ["config", "set", "target", JSON.stringify(target)])).code, 0);
+    bridge = await startBridgeFixture(loadDaemonConfig(receipt.daemon_config).codexapp.socket, { sendToIdle: true });
+    daemon = spawn(receipt.daemon_wrapper, ["--config", receipt.daemon_config], {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(JSON.parse(await readLine(daemon.stdout)).ready, true);
+
+    const threadId = "01a0acc8-e48a-71d1-bcd7-7427e67252a5";
+    assert.equal((await run(receipt.rccs_wrapper, ["session", "bind", "recurring", threadId])).code, 0);
+    const at = new Date(Date.now() - 3000).toISOString();
+    const scheduled = await run(receipt.rccs_wrapper, [
+      "schedule",
+      "add",
+      "recurring-wake",
+      at,
+      "recurring body",
+      "--session", "recurring",
+      "--every", "1s",
+    ]);
+    assert.equal(scheduled.code, 0, scheduled.stderr);
+    assert.equal(JSON.parse(scheduled.stdout).mode, "interval");
+    assert.equal(JSON.parse(scheduled.stdout).interval_ms, 1000);
+
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && bridge.sends.length < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(bridge.sends.length, 2);
+    const state = JSON.parse((await run(receipt.rccs_wrapper, ["status"])).stdout).control.state.schedules["recurring-wake"];
+    assert.equal(state.enabled, true);
+    assert.equal(state.state, "enabled");
+    assert.equal(state.mode, "interval");
   } finally {
     if (daemon) {
       daemon.kill("SIGTERM");

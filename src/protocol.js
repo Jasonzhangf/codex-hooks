@@ -58,6 +58,16 @@ export const SEND_MODES = Object.freeze({
   WORKING_ALLOWED: "working_allowed",
 });
 
+export const SCHEDULE_ACTIONS = Object.freeze({
+  NOTIFY: "notify",
+  SUBAGENT: "subagent",
+});
+
+export const SCHEDULE_MODES = Object.freeze({
+  ONCE: "once",
+  INTERVAL: "interval",
+});
+
 export const MESSAGE_SOURCES = Object.freeze([
   "stopless",
   "update-goal",
@@ -133,6 +143,15 @@ export function normalizeTarget(value) {
     appserver_id: assertNonEmpty(value.appserver_id, "target.appserver_id"),
     session_id: assertNonEmpty(value.session_id, "target.session_id"),
     thread_id: assertNonEmpty(value.thread_id, "target.thread_id"),
+    ...(value.scope_id == null ? {} : { scope_id: assertNonEmpty(value.scope_id, "target.scope_id") }),
+  };
+}
+
+export function normalizeTargetScope(value) {
+  if (!value || typeof value !== "object") throw new Error("target scope is required");
+  return {
+    namespace: assertNonEmpty(value.namespace, "target.namespace"),
+    appserver_id: assertNonEmpty(value.appserver_id, "target.appserver_id"),
     ...(value.scope_id == null ? {} : { scope_id: assertNonEmpty(value.scope_id, "target.scope_id") }),
   };
 }

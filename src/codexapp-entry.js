@@ -14,7 +14,7 @@ const SERVICE = Object.freeze({ scopeId: "local:hooks", sessionId: "hooksd", kin
 const CAPABILITIES = Object.freeze({
   protocol: PROTOCOL,
   query: ["capabilities", "status", "list_threads", "session_status", "message_status"],
-  execution: ["register_target", "unregister_target", "send"],
+  execution: ["register_target", "unregister_target", "send", "create_subagent"],
   namespaces: ["codex_app", "codex_tui"],
   routeRules: ["service_to_registered_target"],
 });
@@ -104,6 +104,7 @@ async function dispatch(request) {
     case "list_threads": return listThreads(params.address);
     case "session_status": return sessionStatus(params.address);
     case "send": return sendMessage(params.message || params);
+    case "create_subagent": return createSubagent(params);
     case "message_status": return messageStatus(params.messageId);
     default: throw codedError(`unknown codexapp method: ${method}`, "method_not_found");
   }
@@ -275,7 +276,39 @@ function publicScope(target) {
     namespace: target.namespace,
     endpoint: target.endpoint,
     sessions: [],
-    capabilities: ["session_status", "send_message_to_thread"],
+    capabilities: ["session_status", "send_message_to_thread", "create_subagent"],
+  };
+}
+
+async function createSubagent(input) {
+  if (!input || typeof input !== "object") throw codedError("create_subagent params are required", "invalid_request");
+  const address = input.address || {};
+  const scopeId = required(address.scopeId || address.scope_id, "address.scopeId");
+  const namespace = required(address.namespace, "address.namespace");
+  const appserverId = required(address.appserverId || address.appserver_id, "address.appserverId");
+  const attemptId = required(input.attemptId || input.attempt_id, "attemptId");
+  const prompt = required(input.prompt, "prompt");
+  const target = targets.get(scopeId);
+  if (!target) throw codedError(`target scope not found: ${scopeId}`, "target_scope_not_found");
+  if (target.namespace !== namespace || target.appserver_id !== appserverId) {
+    throw codedError("create_subagent target identity mismatch", "target_identity_mismatch");
+  }
+  const native = await adapter(target).createSubagent({
+    prompt,
+    clientUserMessageId: attemptId,
+    ...(input.cwd == null ? {} : { cwd: required(input.cwd, "cwd") }),
+    ...(input.model == null ? {} : { model: required(input.model, "model") }),
+  });
+  return {
+    protocol: PROTOCOL,
+    attemptId,
+    scopeId: target.scope_id,
+    appserverId: target.appserver_id,
+    namespace: target.namespace,
+    threadId: native.threadId,
+    turnId: native.turnId,
+    thread: native.thread,
+    turn: native.turn,
   };
 }
 
@@ -398,6 +431,28 @@ class NativeAppServer {
       input: [{ type: "text", text: body }],
       clientUserMessageId,
     });
+  }
+
+  async createSubagent({ prompt, clientUserMessageId, cwd = null, model = null }) {
+    await this.connect();
+    const started = await this.rpc.call("thread/start", {
+      ...(cwd == null ? {} : { cwd }),
+      ...(model == null ? {} : { model }),
+    });
+    const thread = started?.thread;
+    if (!thread || typeof thread.id !== "string" || thread.id.trim() === "") {
+      throw codedError("thread/start returned no thread identity", "native_transport_error");
+    }
+    const turnResult = await this.rpc.call("turn/start", {
+      threadId: thread.id,
+      clientUserMessageId,
+      input: [{ type: "text", text: prompt, text_elements: [] }],
+    });
+    const turn = turnResult?.turn;
+    if (!turn || typeof turn.id !== "string" || turn.id.trim() === "") {
+      throw codedError("turn/start returned no turn identity", "native_transport_error");
+    }
+    return { threadId: thread.id, turnId: turn.id, thread, turn };
   }
 
   close() {

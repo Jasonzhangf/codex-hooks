@@ -6,11 +6,17 @@ import { assertNonEmpty } from "./protocol.js";
 export const CODEXAPP_CAPABILITIES = Object.freeze([
   "session_status",
   "send_message_to_thread",
+  "create_subagent",
+]);
+export const CODEXAPP_REQUIRED_CAPABILITIES = Object.freeze([
+  "session_status",
+  "send_message_to_thread",
 ]);
 
 const BRIDGE_METHODS = Object.freeze({
   session_status: "session_status",
   send_message_to_thread: "send",
+  create_subagent: "create_subagent",
 });
 
 const DEFINITIVE_SEND_ERRORS = new Set([
@@ -31,7 +37,7 @@ export function assertCodexAppPort(port) {
   return port;
 }
 
-export async function verifyCodexAppPort(port, required = CODEXAPP_CAPABILITIES) {
+export async function verifyCodexAppPort(port, required = CODEXAPP_REQUIRED_CAPABILITIES) {
   assertCodexAppPort(port);
   if (typeof port.capabilities !== "function") throw new Error("codexapp port requires capabilities()");
   if (!Array.isArray(required)) throw new Error("required codexapp capabilities must be an array");
@@ -45,7 +51,7 @@ export async function verifyCodexAppPort(port, required = CODEXAPP_CAPABILITIES)
 export function normalizeCodexAppCapabilities(value) {
   if (!Array.isArray(value)) throw new Error("codexapp capabilities must be an array");
   const capabilities = value.map((entry) => assertNonEmpty(entry, "codexapp capability"));
-  for (const required of CODEXAPP_CAPABILITIES) {
+  for (const required of CODEXAPP_REQUIRED_CAPABILITIES) {
     if (!capabilities.includes(required)) throw new Error(`codexapp missing capability: ${required}`);
   }
   return [...new Set(capabilities)];
@@ -88,6 +94,8 @@ export class CodexAppBridgePort {
     if (!bridge.query?.includes(BRIDGE_METHODS.session_status) || !bridge.execution?.includes(BRIDGE_METHODS.send_message_to_thread)) {
       throw new Error("codexapp bridge lacks the required session status/send control methods");
     }
+    const advertised = ["session_status", "send_message_to_thread"];
+    if (bridge.execution?.includes(BRIDGE_METHODS.create_subagent)) advertised.push("create_subagent");
     if (!Array.isArray(bridge.namespaces)) throw new Error("codexapp bridge did not advertise namespaces");
     const status = await this.client.call("status");
     if (status?.protocol !== "codex-comm/v1" || status.bridge !== "up" || !Array.isArray(status.scopes)) {
@@ -104,7 +112,7 @@ export class CodexAppBridgePort {
       if (!bridge.namespaces.includes(namespace)) throw new Error(`codexapp bridge does not support configured namespace: ${namespace}`);
       assertTargetScope(findScope(status.scopes, scopeId), { namespace, appserverId, scopeId });
     }
-    return [...CODEXAPP_CAPABILITIES];
+    return advertised;
   }
 
   async session_status(target) {
@@ -134,6 +142,36 @@ export class CodexAppBridgePort {
       state,
       attempt_id: id,
       target_receipt: delivered?.targetReceipt || null,
+      native_result: result,
+    };
+  }
+
+  async create_subagent({ target, prompt, attempt_id, cwd = null, model = null }) {
+    const id = assertNonEmpty(attempt_id, "attempt_id");
+    const address = {
+      scopeId: assertNonEmpty(target.scope_id, "target.scope_id"),
+      appserverId: assertNonEmpty(target.appserver_id, "target.appserver_id"),
+      namespace: assertNonEmpty(target.namespace, "target.namespace"),
+    };
+    const result = await this.client.call(BRIDGE_METHODS.create_subagent, {
+      address,
+      prompt: assertNonEmpty(prompt, "prompt"),
+      attemptId: id,
+      ...(cwd == null ? {} : { cwd: assertNonEmpty(cwd, "cwd") }),
+      ...(model == null ? {} : { model: assertNonEmpty(model, "model") }),
+    });
+    if (!result || result.attemptId !== id || result.namespace !== address.namespace || result.appserverId !== address.appserverId) {
+      throw new Error("codexapp create_subagent receipt identity mismatch");
+    }
+    if (typeof result.threadId !== "string" || result.threadId.trim() === "" || typeof result.turnId !== "string" || result.turnId.trim() === "") {
+      throw new Error("codexapp create_subagent receipt is incomplete");
+    }
+    return {
+      accepted: true,
+      state: "accepted",
+      attempt_id: id,
+      thread_id: result.threadId,
+      turn_id: result.turnId,
       native_result: result,
     };
   }

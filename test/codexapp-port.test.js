@@ -165,3 +165,63 @@ test("CodexApp bridge port rejects a caller target scope that disagrees with the
     /target scope mismatch.*local:tui.*other:tui/,
   );
 });
+
+test("CodexApp bridge port creates a subagent through the typed bridge capability", async () => {
+  const socketPath = join(tmpdir(), `codex-hooks-port-subagent-${process.pid}.sock`);
+  const requests = [];
+  const server = net.createServer((socket) => {
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      const index = buffer.indexOf("\n");
+      if (index < 0) return;
+      const request = JSON.parse(buffer.slice(0, index));
+      requests.push(request);
+      const result = request.method === "capabilities"
+        ? { protocol: "codex-comm/v1", query: ["session_status"], execution: ["send", "create_subagent"], namespaces: ["codex_tui"] }
+        : request.method === "status"
+          ? { protocol: "codex-comm/v1", bridge: "up", service_identities: [{ scopeId: "hooks", sessionId: "hooksd", kind: "service", live: true }], scopes: [{ scopeId: "local:tui", appserverId: "tui-appserver", namespace: "codex_tui", capabilities: ["send_message_to_thread", "create_subagent"] }] }
+          : {
+            protocol: "codex-comm/v1",
+            attemptId: request.params.attemptId,
+            scopeId: "local:tui",
+            appserverId: "tui-appserver",
+            namespace: "codex_tui",
+            threadId: "thread-new",
+            turnId: "turn-new",
+          };
+      socket.end(`${JSON.stringify({ id: request.id, result })}\n`);
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  try {
+    const port = new CodexAppBridgePort({
+      socket: socketPath,
+      source: { scopeId: "hooks", sessionId: "hooksd" },
+      source_kind: "service",
+      target_scopes: { "codex_tui/tui-appserver": "local:tui" },
+    });
+    assert.deepEqual(await port.capabilities(), ["session_status", "send_message_to_thread", "create_subagent"]);
+    const receipt = await port.create_subagent({
+      target: { namespace: "codex_tui", appserver_id: "tui-appserver", scope_id: "local:tui" },
+      prompt: "run task",
+      attempt_id: "timer:spawn:2026-09-16T12:00:00Z",
+      cwd: "/tmp",
+    });
+    assert.equal(receipt.thread_id, "thread-new");
+    assert.equal(receipt.turn_id, "turn-new");
+    assert.deepEqual(requests.find((request) => request.method === "create_subagent").params, {
+      address: { scopeId: "local:tui", appserverId: "tui-appserver", namespace: "codex_tui" },
+      prompt: "run task",
+      attemptId: "timer:spawn:2026-09-16T12:00:00Z",
+      cwd: "/tmp",
+    });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(socketPath, { force: true });
+  }
+});

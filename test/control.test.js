@@ -147,3 +147,32 @@ test("health endpoint advertises a valid IPv6 loopback URL", async () => {
     await server.close();
   }
 });
+
+test("control plane validates schedule action, interval, and target shape", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  const target = { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui", session_id: "session", thread_id: "thread" };
+  assert.throws(
+    () => control.mutate({ operation: "schedule.upsert", id: "bad-action", action: "unknown", at: "2026-09-10T12:00:00Z", body: "wake", target }),
+    /unsupported schedule action/,
+  );
+  assert.throws(
+    () => control.mutate({ operation: "schedule.upsert", id: "bad-interval", mode: "interval", at: "2026-09-10T12:00:00Z", body: "wake", target }),
+    /interval_ms/,
+  );
+  assert.throws(
+    () => control.mutate({ operation: "schedule.upsert", id: "bad-subagent-target", action: "subagent", at: "2026-09-10T12:00:00Z", body: "run", target: { namespace: "codex_tui" } }),
+    /target\.appserver_id/,
+  );
+  const subagent = control.mutate({
+    operation: "schedule.add",
+    id: "spawn-target",
+    action: "subagent",
+    at: "2026-09-10T12:00:00Z",
+    body: "run",
+    target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" },
+  });
+  assert.equal(subagent.action, "subagent");
+  assert.equal(subagent.session, undefined);
+  assert.deepEqual(subagent.target, { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" });
+});

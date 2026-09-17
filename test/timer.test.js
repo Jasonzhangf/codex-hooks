@@ -187,3 +187,121 @@ test("timer rejects malformed schedule time and preserves persistence failure", 
   });
   await assert.rejects(timer.tick(), (error) => error.code === "persistence_failure");
 });
+
+test("interval schedule coalesces missed occurrences into one send and advances without terminal completion", async () => {
+  const { codexapp, daemon, store } = setup();
+  const schedules = store.getControl("schedules");
+  schedules["daily-check"] = {
+    ...schedules["daily-check"],
+    mode: "interval",
+    interval_ms: 60_000,
+    next_at: "2026-09-11T10:00:00.000Z",
+  };
+  store.putControl("schedules", schedules);
+  const clock = new ManualClock("2026-09-11T10:04:30.000Z");
+  const timer = new TimerOperator({
+    store,
+    clock,
+    dispatch: (intent) => daemon.dispatchIntent(intent, { kind: "timer" }),
+  });
+
+  const fired = await timer.tick();
+  assert.equal(fired.length, 1);
+  assert.equal(codexapp.sends.length, 1);
+  const persisted = store.getControl("schedules")["daily-check"];
+  assert.equal(persisted.enabled, true);
+  assert.equal(persisted.state, "enabled");
+  assert.equal(persisted.last_occurrence, "timer:daily-check:2026-09-11T10:00:00.000Z");
+  assert.equal(persisted.next_at, "2026-09-11T10:05:00.000Z");
+  assert.deepEqual(await timer.tick(), []);
+  assert.equal(codexapp.sends.length, 1);
+});
+
+test("interval notification defers while working and resumes the same coalesced occurrence once", async () => {
+  const { codexapp, daemon, store } = setup({ state: "working" });
+  const schedules = store.getControl("schedules");
+  schedules["daily-check"] = {
+    ...schedules["daily-check"],
+    mode: "interval",
+    interval_ms: 60_000,
+    next_at: "2026-09-11T10:00:00.000Z",
+  };
+  store.putControl("schedules", schedules);
+  const clock = new ManualClock("2026-09-11T10:03:00.000Z");
+  const timer = new TimerOperator({
+    store,
+    clock,
+    dispatch: (intent) => daemon.dispatchIntent(intent, { kind: "timer" }),
+    resume: (target) => daemon.flushPending(target),
+  });
+
+  assert.equal((await timer.tick())[0].result.decision, "deferred");
+  assert.equal(codexapp.sends.length, 0);
+  assert.equal(store.getControl("schedules")["daily-check"].state, "deferred_while_working");
+
+  codexapp.state = "idle";
+  assert.equal((await timer.tick())[0].result.sent.length, 1);
+  assert.equal(codexapp.sends.length, 1);
+  assert.equal(store.getControl("schedules")["daily-check"].state, "enabled");
+  assert.deepEqual(await timer.tick(), []);
+  assert.equal(codexapp.sends.length, 1);
+});
+
+test("subagent schedule invokes native create once and records thread and turn receipt", async () => {
+  const store = new MemoryStateStore();
+  const control = new FrameworkControlPlane({ store });
+  control.mutate({ operation: "operator.set_enabled", name: "timer", enabled: true });
+  control.mutate({
+    operation: "schedule.upsert",
+    id: "spawn-once",
+    action: "subagent",
+    mode: "once",
+    at: "2026-09-11T10:00:00.000Z",
+    body: "run the task",
+    target: { namespace: "codex_tui", appserver_id: "tui-appserver", scope_id: "local:tui" },
+    cwd: "/tmp",
+  });
+  const created = [];
+  const timer = new TimerOperator({
+    store,
+    clock: new ManualClock("2026-09-11T10:00:00.000Z"),
+    dispatch: async () => ({ decision: "sent" }),
+    createSubagent: async (request) => {
+      created.push(request);
+      return { thread_id: "thread-new", turn_id: "turn-new" };
+    },
+  });
+
+  const result = await timer.tick();
+  assert.equal(result[0].action, "subagent");
+  assert.equal(result[0].result.decision, "sent");
+  assert.deepEqual(created, [{
+    target: { namespace: "codex_tui", appserver_id: "tui-appserver", scope_id: "local:tui" },
+    prompt: "run the task",
+    attempt_id: "timer:spawn-once:2026-09-11T10:00:00.000Z",
+    scheduled_at: "2026-09-11T10:00:00.000Z",
+    cwd: "/tmp",
+  }]);
+  const persisted = store.getControl("schedules")["spawn-once"];
+  assert.equal(persisted.state, "sent");
+  assert.equal(persisted.last_delivery.thread_id, "thread-new");
+  assert.equal(persisted.last_delivery.turn_id, "turn-new");
+});
+
+test("recurring subagent schedules require explicit concurrency consent", () => {
+  const store = new MemoryStateStore();
+  const control = new FrameworkControlPlane({ store });
+  assert.throws(
+    () => control.mutate({
+      operation: "schedule.upsert",
+      id: "bad-spawn",
+      action: "subagent",
+      mode: "interval",
+      interval_ms: 60_000,
+      at: "2026-09-11T10:00:00.000Z",
+      body: "run",
+      target: { namespace: "codex_tui", appserver_id: "tui-appserver", scope_id: "local:tui" },
+    }),
+    /allow_concurrent/,
+  );
+});

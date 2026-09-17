@@ -6,9 +6,25 @@ import { readInstallRecord, setStopHookEnabled, writeInstallRecord } from "./ins
 import { normalizeLoopbackEndpoint } from "./endpoint.js";
 
 const endpoint = process.env.ROUTECODEX_HOOKS_ENDPOINT || null;
-const [operation, ...args] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const [operation, ...args] = argv;
 
-if (operation === "config-show") {
+if (operation === "status") {
+  const record = readInstallRecord();
+  print(await new McpStateClient(normalizeEndpoint(endpoint || record.endpoint)).queryStatus());
+} else if (operation === "session") {
+  await sessionCommand(args);
+} else if (operation === "schedule") {
+  await scheduleCommand(args);
+} else if (operation === "config") {
+  configCommand(args);
+} else if (operation === "hook") {
+  hookCommand(args);
+} else if (operation === "supervisor") {
+  supervisorCommand(args);
+} else if (operation === "operator") {
+  await operatorCommand(args);
+} else if (operation === "config-show") {
   const record = readInstallRecord();
   const daemon = readJson(record.daemon_config);
   print({ install: record, daemon });
@@ -23,9 +39,6 @@ if (operation === "config-show") {
   print(setStopHookEnabled(readInstallRecord(), operation === "hook-enable"));
 } else if (operation === "supervisor-enable" || operation === "supervisor-disable") {
   print(setSupervisorEnabled(readInstallRecord(), operation === "supervisor-enable"));
-} else if (operation === "status") {
-  const record = readInstallRecord();
-  print(await new McpStateClient(normalizeEndpoint(endpoint || record.endpoint)).queryStatus());
 } else if (operation === "operator-enable" || operation === "operator-disable") {
   const name = required(args[0], "operator name");
   await mutate({ operation: "operator.set_enabled", name, enabled: operation === "operator-enable" });
@@ -60,7 +73,113 @@ if (operation === "config-show") {
 } else if (operation === "schedule-pause" || operation === "schedule-resume") {
   await mutate({ operation: operation === "schedule-pause" ? "schedule.pause" : "schedule.resume", id: required(args[0], "schedule id") });
 } else {
-  throw new Error("usage: config-show | config-set <endpoint|codexapp_socket|source_scope|source_session|target_scope|target> <value> | hook-enable|hook-disable stop | supervisor-enable|supervisor-disable | status | operator-enable|operator-disable <name> | session-bind <alias> <session-id> [--target <namespace/appserver>] [--namespace <namespace>] [--appserver <id>] [--replace] | session-unbind <alias> | schedule-add <id> <at> <body> --session <alias> [--send-mode idle_only|working_allowed] | schedule-upsert <id> <at> <body> <target-json> [idle_only|working_allowed] | schedule-pause|schedule-resume|schedule-remove <id>");
+  throw new Error(usage());
+}
+
+async function sessionCommand(args) {
+  const [subcommand, ...rest] = args;
+  if (subcommand === "bind") {
+    const record = readInstallRecord();
+    const daemon = readJson(record.daemon_config);
+    const alias = required(rest[0], "session alias");
+    const sessionId = required(rest[1], "session id");
+    const options = parseOptions(rest.slice(2), ["--target", "--namespace", "--appserver", "--replace"]);
+    await mutate({
+      operation: "session.bind",
+      alias,
+      target: resolveSessionTarget(daemon, options, sessionId),
+      replace: options.replace === true,
+    });
+    return;
+  }
+  if (subcommand === "unbind") {
+    await mutate({ operation: "session.unbind", alias: required(rest[0], "session alias") });
+    return;
+  }
+  throw new Error("usage: rccs session bind|unbind ...");
+}
+
+async function scheduleCommand(args) {
+  const [subcommand, ...rest] = args;
+  if (subcommand === "add") {
+    const options = parseOptions(rest.slice(3), [
+      "--session",
+      "--target",
+      "--send-mode",
+      "--every",
+      "--once",
+      "--action",
+      "--cwd",
+      "--model",
+      "--allow-concurrent",
+    ]);
+    const action = options.action || "notify";
+    const mode = options.every ? "interval" : "once";
+    const at = required(rest[1], "schedule time");
+    const body = required(rest[2], "schedule body");
+    const request = {
+      operation: "schedule.add",
+      id: required(rest[0], "schedule id"),
+      action,
+      mode,
+      at,
+      body,
+      ...(options.send_mode ? { send_mode: options.send_mode } : {}),
+      ...(options.every ? { interval_ms: parseDuration(options.every) } : {}),
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.allow_concurrent === true ? { allow_concurrent: true } : {}),
+    };
+    if (options.session) request.session = options.session;
+    else if (options.target) request.target = parseTarget(options.target);
+    else throw new Error("--session or --target is required");
+    await mutate(request);
+    return;
+  }
+  if (["remove", "pause", "resume"].includes(subcommand)) {
+    const operation = { remove: "schedule.remove", pause: "schedule.pause", resume: "schedule.resume" }[subcommand];
+    await mutate({ operation, id: required(rest[0], "schedule id") });
+    return;
+  }
+  throw new Error("usage: rccs schedule add|remove|pause|resume ...");
+}
+
+function configCommand(args) {
+  const [subcommand, ...rest] = args;
+  if (subcommand === "show") {
+    const record = readInstallRecord();
+    print({ install: record, daemon: readJson(record.daemon_config) });
+    return;
+  }
+  if (subcommand === "set") {
+    const record = readInstallRecord();
+    print(setConfig(record, required(rest[0], "config key"), required(rest[1], "config value")));
+    return;
+  }
+  throw new Error("usage: rccs config show|set ...");
+}
+
+function hookCommand(args) {
+  const [subcommand, name] = args;
+  if (subcommand !== "enable" && subcommand !== "disable") throw new Error("usage: rccs hook enable|disable stop");
+  if (required(name, "hook name") !== "stop") throw new Error(`unsupported hook: ${name}`);
+  print(setStopHookEnabled(readInstallRecord(), subcommand === "enable"));
+}
+
+function supervisorCommand(args) {
+  const [subcommand] = args;
+  if (subcommand !== "enable" && subcommand !== "disable") throw new Error("usage: rccs supervisor enable|disable");
+  print(setSupervisorEnabled(readInstallRecord(), subcommand === "enable"));
+}
+
+async function operatorCommand(args) {
+  const [subcommand, name] = args;
+  if (subcommand !== "enable" && subcommand !== "disable") throw new Error("usage: rccs operator enable|disable <name>");
+  await mutate({ operation: "operator.set_enabled", name: required(name, "operator name"), enabled: subcommand === "enable" });
+}
+
+function usage() {
+  return "usage: rccs status | rccs session bind|unbind ... | rccs schedule add|remove|pause|resume ... | rccs config show|set ... | rccs hook enable|disable stop | rccs supervisor enable|disable | rccs operator enable|disable <name>";
 }
 
 async function mutate(value) {
@@ -163,8 +282,8 @@ function parseOptions(args, allowed) {
   for (let index = 0; index < args.length; index += 1) {
     const key = args[index];
     if (!allowedSet.has(key)) throw new Error(`unsupported option: ${key}`);
-    if (key === "--replace") {
-      options.replace = true;
+    if (key === "--replace" || key === "--once" || key === "--allow-concurrent") {
+      options[key.slice(2).replaceAll("-", "_")] = true;
       continue;
     }
     const value = args[index + 1];
@@ -173,6 +292,15 @@ function parseOptions(args, allowed) {
     index += 1;
   }
   return options;
+}
+
+function parseDuration(value) {
+  const match = /^([1-9]\d*)(ms|s|m|h|d)$/.exec(value);
+  if (!match) throw new Error("--every must be a positive duration such as 30s, 5m, 1h, or 1d");
+  const multiplier = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2]];
+  const milliseconds = Number(match[1]) * multiplier;
+  if (!Number.isSafeInteger(milliseconds)) throw new Error("--every duration is too large");
+  return milliseconds;
 }
 
 function required(value, name) {

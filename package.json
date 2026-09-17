@@ -13,6 +13,7 @@
     "codexapp": "node src/codexapp-entry.js"
   },
   "bin": {
+    "rccs": "src/cli.js",
     "routecodex-hooks": "src/cli.js",
     "routecodex-hooks-mcp": "src/mcp-server.js",
     "routecodex-hooksd": "src/daemon-entry.js",

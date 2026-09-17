@@ -17,7 +17,9 @@ const endpoint = process.env.ROUTECODEX_HOOKS_ENDPOINT || null;
 const argv = process.argv.slice(2);
 const [operation, ...args] = argv;
 
-if (operation === "init") {
+if (operation === "--help" || operation === "-h") {
+  printHelp(usage());
+} else if (operation === "init") {
   print({ initialized: true, ...initCommand(args) });
 } else if (operation === "status") {
   const record = readInstallRecord();
@@ -118,6 +120,10 @@ async function sessionCommand(args) {
 }
 
 async function scheduleCommand(args) {
+  if (hasHelp(args)) {
+    printHelp(scheduleHelp());
+    return;
+  }
   const [subcommand, ...rest] = args;
   if (subcommand === "add") {
     const options = parseOptions(rest.slice(3), [
@@ -138,6 +144,7 @@ async function scheduleCommand(args) {
     ]);
     if (options.once && options.every) throw new Error("--once and --every cannot be used together");
     const action = options.action || "notify";
+    validateScheduleSelector(action, options);
     const mode = options.every ? "interval" : "once";
     const at = required(rest[1], "schedule time");
     const body = required(rest[2], "schedule body");
@@ -159,9 +166,8 @@ async function scheduleCommand(args) {
       ...(options.allow_concurrent === true ? { allow_concurrent: true } : {}),
       ...(ownerSessionId(options) ? { owner_session_id: ownerSessionId(options) } : {}),
     };
-    if (options.session) request.session = options.session;
-    else if (options.target) request.target = parseTargetIdentity(options.target);
-    else throw new Error("--session or --target is required");
+    if (action === "subagent") request.target = parseTargetIdentity(options.target);
+    else request.session = options.session;
     await mutate(request);
     return;
   }
@@ -237,6 +243,10 @@ async function scheduleCommand(args) {
 }
 
 async function waitCommand(args) {
+  if (hasHelp(args)) {
+    printHelp(waitHelp());
+    return;
+  }
   const duration = required(args[0], "wait duration");
   const remainder = args.slice(1);
   const body = remainder[0] && !remainder[0].startsWith("--") ? remainder.shift() : "Wait elapsed. Continue the current task.";
@@ -265,6 +275,10 @@ async function waitCommand(args) {
 }
 
 function mcpCommand(args) {
+  if (hasHelp(args)) {
+    printHelp(mcpHelp());
+    return;
+  }
   const [subcommand, ...rest] = args;
   if (subcommand !== "register") throw new Error("usage: rccs mcp register [--name <name>] [--command <path>]");
   const options = parseOptions(rest, ["--name", "--command"]);
@@ -297,6 +311,10 @@ function registerMcp({ name, command, codexHome = null }) {
 }
 
 async function subagentCommand(args) {
+  if (hasHelp(args)) {
+    printHelp(subagentHelp());
+    return;
+  }
   const [subcommand, ...rest] = args;
   if (subcommand === "create") {
     const options = parseOptions(rest.slice(1), [
@@ -447,6 +465,111 @@ function usage() {
   return "usage: rccs init | rccs status | rccs session bind|unbind ... | rccs schedule add|list|show|update|remove|pause|resume|stop ... | rccs wait <duration> [body] [--async] | rccs subagent create|list|show|stop ... | rccs longhorizon register|list|show|activate|pause|stop|remove ... | rccs mcp register ... | rccs config show|set ... | rccs hook enable|disable stop | rccs supervisor enable|disable | rccs operator enable|disable <name>";
 }
 
+function hasHelp(args) {
+  return args.includes("--help") || args.includes("-h");
+}
+
+function printHelp(value) {
+  process.stdout.write(`${value.trimEnd()}\n`);
+}
+
+function scheduleHelp() {
+  return `
+usage:
+  rccs schedule add <id> <at> <body> --session <alias> [notify options]
+  rccs schedule add <id> <at> <body> --target <namespace>/<appserver> --action subagent [subagent options]
+  rccs schedule list [--global | --session <session-id>]
+  rccs schedule show <id>
+  rccs schedule update <id> [options]
+  rccs schedule pause|resume|stop|remove <id>
+
+options:
+  --once                         one-shot schedule; default
+  --every <duration>             recurring interval such as 30s, 5m, 1h, 1d
+  --send-mode idle_only|working_allowed
+                                 default idle_only; working_allowed permits a working target
+  --busy-policy defer|skip       default defer; skip records one skipped occurrence
+  --action notify|subagent       default notify
+  --cwd <absolute-path>          subagent working directory
+  --profile <profile>            rejected: native create_subagent has no profile selector
+  --model <model>                subagent model override
+  --effort <effort>              subagent effort override
+  --ephemeral                    required for subagent schedules; native ephemeral thread
+  --allow-concurrent             required for recurring subagent schedules
+  --owner-session <session-id>   ownership scope for list/stop
+
+notes:
+  --once and --every are mutually exclusive.
+  notify schedules require --session and reject --target.
+  subagent schedules require --target and --action subagent.
+  recurring occurrences are coalesced; a missed backlog creates one occurrence.
+  stop is terminal for the schedule; pause and resume are reversible.
+`;
+}
+
+function waitHelp() {
+  return `
+usage:
+  rccs wait <duration> [body] [--session <alias>] [options]
+
+options:
+  --session <alias>              target binding; otherwise resolve from CODEX_SESSION_ID/CODEX_THREAD_ID
+  --async                        register and return; default is blocking until terminal delivery
+  --send-mode idle_only|working_allowed
+                                 async default idle_only; blocking default working_allowed
+  --busy-policy defer|skip       default defer
+  --id <id>                      schedule identity; default wait-<timestamp>-<pid>
+  --timeout <duration>           maximum blocking wait such as 30s or 5m
+  --owner-session <session-id>   ownership scope for list/stop
+
+notes:
+  wait is one-shot. Duration accepts ms, s, m, h, or d.
+  Use async for long waits instead of polling the agent.
+`;
+}
+
+function subagentHelp() {
+  return `
+usage:
+  rccs subagent create <prompt> --target <namespace>/<appserver> [options]
+  rccs subagent list [--global | --session <session-id>]
+  rccs subagent show <thread-id>
+  rccs subagent stop <thread-id>
+
+options:
+  --target <namespace>/<appserver> required native target scope
+  --cwd <absolute-path>            child working directory
+  --profile <profile>              rejected: native create_subagent has no profile selector
+  --model <model>                  child model override
+  --effort <effort>                child effort override
+  --ephemeral                      create a disposable native thread
+  --owner-session <session-id>     ownership scope for list
+  --id <id>                        idempotency attempt identity
+  --global                         list all children
+  --session <session-id>           list children owned by one session
+
+notes:
+  create starts a fresh thread; caller conversation context is not inherited.
+  stop reads native status and uses turn/interrupt only.
+  archive, delete, and close are not supported stop substitutes.
+`;
+}
+
+function mcpHelp() {
+  return `
+usage:
+  rccs mcp register [--name <name>] [--command <path>]
+
+options:
+  --name <name>                  MCP entry name; default routecodex-hooks
+  --command <path>               MCP executable; default installed routecodex-hooks-mcp
+
+notes:
+  MCP is read-only. Use the routecodex_hooks_status tool for health, schedules,
+  bindings, subagents, LongHorizon state, and unresolved delivery evidence.
+`;
+}
+
 function initCommand(args) {
   const options = parseInitOptions(args);
   const previous = tryReadInstallRecord();
@@ -572,6 +695,17 @@ function parseTargetIdentity(value) {
   const [namespace, appserverId, ...extra] = required(value, "target").split("/");
   if (!namespace || !appserverId || extra.length > 0) throw new Error("--target must be <namespace/appserver>");
   return { namespace, appserver_id: appserverId };
+}
+
+function validateScheduleSelector(action, options) {
+  if (action === "subagent") {
+    if (!options.target) throw new Error("--target is required when --action subagent");
+    if (options.session) throw new Error("--session is not valid with --action subagent; use --target");
+    return;
+  }
+  if (action !== "notify") throw new Error(`unsupported schedule action: ${action}; use notify or subagent`);
+  if (!options.session) throw new Error("--session is required for action=notify");
+  if (options.target) throw new Error("--target requires --action subagent");
 }
 
 function parseTargetConfig(value) {

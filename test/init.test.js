@@ -559,12 +559,13 @@ test("rccs lists and closes registered subagents through the daemon", async () =
     }
     const childThread = bridge.lastCreatedThreadId;
     assert.equal(typeof childThread, "string");
+    assert.equal(bridge.subagentCalls.find((entry) => entry.method === "create_subagent").params.ephemeral, true);
     const listed = await run(receipt.rccs_wrapper, ["subagent", "list", "--session", threadId]);
     assert.equal(listed.code, 0, listed.stderr);
     assert.deepEqual(JSON.parse(listed.stdout).map((entry) => entry.thread_id), [childThread]);
     const stopped = await run(receipt.rccs_wrapper, ["subagent", "stop", childThread]);
     assert.equal(stopped.code, 0, stopped.stderr);
-    assert.equal(JSON.parse(stopped.stdout).state, "stopped");
+    assert.equal(JSON.parse(stopped.stdout).state, "released");
     assert.deepEqual(bridge.subagentCalls.map((entry) => entry.method), ["create_subagent", "session_status", "interrupt_turn"]);
     const archived = await run(receipt.rccs_wrapper, ["subagent", "archive", childThread]);
     assert.notEqual(archived.code, 0);

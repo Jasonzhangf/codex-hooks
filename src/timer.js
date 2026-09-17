@@ -191,6 +191,7 @@ export class TimerOperator {
       ...(schedule.cwd == null ? {} : { cwd: schedule.cwd }),
       ...(schedule.model == null ? {} : { model: schedule.model }),
       ...(schedule.effort == null ? {} : { effort: schedule.effort }),
+      ephemeral: true,
     });
     if (typeof this.registerSubagent === "function") {
       try {
@@ -202,6 +203,7 @@ export class TimerOperator {
           ...(schedule.owner_session_id == null ? {} : { owner_session_id: schedule.owner_session_id }),
           ...(schedule.model == null ? {} : { model: schedule.model }),
           ...(schedule.effort == null ? {} : { effort: schedule.effort }),
+          ephemeral: true,
           schedule_id: schedule.id,
           occurrence_id: occurrenceId,
           created_at: at,
@@ -226,6 +228,7 @@ export class TimerOperator {
         attempt_id: occurrenceId,
         thread_id: receipt.thread_id,
         turn_id: receipt.turn_id,
+        ephemeral: true,
         receipt,
       },
     };

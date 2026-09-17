@@ -108,7 +108,7 @@ async function dispatch(request) {
     case "create_subagent": return createSubagent(params);
     case "interrupt_turn": return interruptTurn(params);
     case "read_subagent_result": return readSubagentResult(params);
-    case "message_status": return messageStatus(params.messageId);
+    case "message_status": return messageStatus(params.messageId, params.attemptId);
     default: throw codedError(`unknown codexapp method: ${method}`, "method_not_found");
   }
 }
@@ -242,10 +242,14 @@ async function enqueueMessage(message, expectedTurnId = null) {
   return publicMessage(messageRecord);
 }
 
-async function messageStatus(messageId) {
+async function messageStatus(messageId, attemptId) {
   const id = required(messageId, "messageId");
+  const attempt = required(attemptId, "attemptId");
   const message = messages.get(id);
   if (!message) throw codedError(`message not found: ${id}`, "message_not_found");
+  if (message.attemptId !== attempt) {
+    throw codedError(`message attempt does not match: ${id}`, "message_attempt_mismatch");
+  }
   const { target, sessionId } = resolveTarget(message.to);
   const current = await adapter(target).thread(target, sessionId);
   const receipt = current.items.find((item) => item.clientId === id || item.clientUserMessageId === id);

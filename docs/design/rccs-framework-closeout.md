@@ -123,6 +123,7 @@ rccs schedule add <id> <at> <body>
   [--cwd <absolute-path>]
   [--model <model>]
   [--effort <effort>]
+  [--ephemeral]
   [--allow-concurrent]
   [--owner-session <session-id>]
 
@@ -256,6 +257,8 @@ alias -> namespace, appserver_id, session_id, thread_id, optional scope_id
 ```
 
 `schedule add --session <alias>` resolves the binding at registration time.
+Subagent schedules always create an ephemeral child; `--ephemeral` is accepted
+as an explicit assertion of that fixed behavior.
 Changing the binding later does not silently retarget an existing schedule.
 Use `schedule update --session <alias>` to make that change explicit.
 

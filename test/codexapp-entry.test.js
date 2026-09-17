@@ -278,10 +278,14 @@ test("internal codexapp advances a message through receipt, reply, and read evid
       },
     });
     assert.equal(sent.state, "accepted");
-    const delivered = await control(controlSocket, "message_status", { messageId: "message-1" });
+    const delivered = await control(controlSocket, "message_status", { messageId: "message-1", attemptId: "message-1" });
     assert.equal(delivered.state, "delivered");
     assert.equal(delivered.evidence.find((entry) => entry.state === "delivered").targetReceipt.clientId, "message-1");
-    const replied = await control(controlSocket, "message_status", { messageId: "message-1" });
+    await assert.rejects(
+      control(controlSocket, "message_status", { messageId: "message-1", attemptId: "other-attempt" }),
+      (error) => error.code === "message_attempt_mismatch",
+    );
+    const replied = await control(controlSocket, "message_status", { messageId: "message-1", attemptId: "message-1" });
     assert.equal(replied.state, "read");
     assert.equal(replied.evidence.find((entry) => entry.state === "executed").executionItemId, "item-agent-1");
     assert.equal(replied.evidence.find((entry) => entry.state === "replied").responseTurnId, "turn-1");

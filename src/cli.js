@@ -132,6 +132,7 @@ async function scheduleCommand(args) {
       "--profile",
       "--model",
       "--effort",
+      "--ephemeral",
       "--allow-concurrent",
       "--owner-session",
     ]);
@@ -154,6 +155,7 @@ async function scheduleCommand(args) {
       ...(options.profile ? { profile: options.profile } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
+      ...(options.ephemeral === true ? { ephemeral: true } : {}),
       ...(options.allow_concurrent === true ? { allow_concurrent: true } : {}),
       ...(ownerSessionId(options) ? { owner_session_id: ownerSessionId(options) } : {}),
     };
@@ -197,6 +199,7 @@ async function scheduleCommand(args) {
       "--profile",
       "--model",
       "--effort",
+      "--ephemeral",
       "--allow-concurrent",
       "--owner-session",
     ]);
@@ -216,6 +219,7 @@ async function scheduleCommand(args) {
       ...(options.profile ? { profile: options.profile } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
+      ...(options.ephemeral === true ? { ephemeral: true } : {}),
       ...(options.allow_concurrent === true ? { allow_concurrent: true } : {}),
       ...(options.session ? { session: options.session } : {}),
       ...(options.target ? { target: parseTargetIdentity(options.target) } : {}),

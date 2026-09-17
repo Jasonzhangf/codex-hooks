@@ -352,11 +352,14 @@ test("subagent schedule invokes native create once and records thread and turn r
     cwd: "/tmp",
     model: "test-model",
     effort: "high",
+    ephemeral: true,
   }]);
+  assert.equal(registered[0].ephemeral, true);
   assert.equal(registered[0].model, "test-model");
   assert.equal(registered[0].effort, "high");
   const persisted = store.getControl("schedules")["spawn-once"];
   assert.equal(persisted.state, "sent");
+  assert.equal(persisted.last_delivery.ephemeral, true);
   assert.equal(persisted.last_delivery.thread_id, "thread-new");
   assert.equal(persisted.last_delivery.turn_id, "turn-new");
 });

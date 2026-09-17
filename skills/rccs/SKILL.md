@@ -62,14 +62,15 @@ do not inherit the caller's conversation.
 
 ```sh
 rccs schedule add review 2026-09-16T12:00:00Z 'review the candidate' \
-  --action subagent --target codex_tui/tui-appserver
+  --action subagent --target codex_tui/tui-appserver --ephemeral
 rccs subagent list
 rccs subagent list --global
 rccs subagent show <thread-id>
 rccs subagent stop <thread-id>
 ```
 
-Recurring subagent creation requires `--allow-concurrent`. `subagent stop`
+Subagent schedules create ephemeral children; `--ephemeral` states that
+contract explicitly. Recurring subagent creation requires `--allow-concurrent`. `subagent stop`
 reads native status first and, for a working turn, sends `turn/interrupt` with
 the recorded `thread_id` and `turn_id`. An idle child records
 `no_active_turn`; an ephemeral child becomes `released`, otherwise it becomes

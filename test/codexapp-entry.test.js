@@ -525,7 +525,7 @@ test("internal codexapp keeps an ephemeral working status without unsupported ac
   const calls = [];
   const native = await startNativeFixture(appserverSocket, calls, {
     threadStatus: { type: "working" },
-    turnsError: { code: -32601, message: "ephemeral threads do not support thread/turns/list" },
+    turnsError: { code: -32600, message: "ephemeral threads do not support thread/turns/list" },
   });
   const codexapp = spawn(process.execPath, [
     "src/codexapp-entry.js",
@@ -561,7 +561,7 @@ test("internal codexapp preserves active-turn transport failures", async () => {
   const controlSocket = join(root, "codexapp.sock");
   const native = await startNativeFixture(appserverSocket, [], {
     threadStatus: { type: "working" },
-    turnsError: { code: -32603, message: "transport closed" },
+    turnsError: { code: -32600, message: "transport closed" },
   });
   const codexapp = spawn(process.execPath, [
     "src/codexapp-entry.js",

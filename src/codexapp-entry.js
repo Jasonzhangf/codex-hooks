@@ -497,7 +497,7 @@ class NativeAppServer {
     try {
       page = await this.rpc.call("thread/turns/list", { threadId, limit: 100, sortDirection: "desc" });
     } catch (error) {
-      if (error?.code === -32601 || /does not support|not supported|unsupported/i.test(error?.message || "")) {
+      if (error?.code === -32601 || /do(?:es)? not support|not supported|unsupported/i.test(error?.message || "")) {
         throw codedError(`active turn read failed: ${error.message}`, "native_method_unsupported");
       }
       throw codedError(`active turn read failed: ${error.message}`, "native_transport_error");

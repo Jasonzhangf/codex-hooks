@@ -61,6 +61,7 @@ export const SEND_MODES = Object.freeze({
 export const SCHEDULE_ACTIONS = Object.freeze({
   NOTIFY: "notify",
   SUBAGENT: "subagent",
+  WAIT: "wait",
 });
 
 export const SCHEDULE_MODES = Object.freeze({

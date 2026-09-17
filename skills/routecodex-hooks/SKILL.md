@@ -23,6 +23,12 @@ rccs config set target_scope codex_tui/tui-appserver=local:tui
 rccs config set target '{"namespace":"codex_tui","appserver_id":"tui-appserver","scope_id":"local:tui","endpoint":"unix:///path/to/app-server-control.sock"}'
 rccs session bind timer-tui <session-id>
 rccs schedule add wake-1 2026-09-16T12:00:00Z 'wake body' --session timer-tui
+rccs schedule list
+rccs schedule list --global
+rccs wait 5m 'continue after the wait' --session timer-tui
+rccs subagent list
+rccs subagent list --global
+rccs subagent close <thread-id>
 rccs hook disable stop
 rccs hook enable stop
 ```
@@ -31,6 +37,22 @@ rccs hook enable stop
 should use `rccs`.
 
 CLI changes configuration and operator/schedule switches. MCP is query-only: register the installed wrapper once with `codex mcp add routecodex-hooks -- routecodex-hooks-mcp`, then use `routecodex_hooks_status` to read daemon health, Stop hook installation state, operators, and schedules. MCP must not be used to mutate state.
+
+Refresh the installed CLI, hooks, and skills with `rccs init`; it copies the
+same `skills/` bundle to `~/.agent/skills` and `~/.codex/skills`, preserves the
+existing install target when rerun without explicit path flags, and is safe to
+repeat.
+
+`rccs schedule list` defaults to the current `CODEX_SESSION_ID`/`CODEX_THREAD_ID`;
+use `--global` to inspect all schedules. `rccs wait` is a one-shot schedule:
+the default form blocks in the daemon until delivery reaches a terminal state,
+and `--async` returns immediately so the daemon can wake the session later.
+Do not implement waits of one minute or more by polling in the agent.
+
+Subagent schedules are registered as native children. `rccs subagent list`
+defaults to the current session and `--global` lists all children. Closing a
+working child interrupts its turn before archiving the thread; close success is
+reported only after the native archive receipt is recorded.
 
 The hook receives official JSON on stdin and forwards it to hooksd. hooksd owns policy state, persistence, idempotency, running-state gating, and the send decision; codexapp is the only message sender. An idle-only intent is deferred while the target is working or input-active. Unknown or disconnected state fails closed. A Stop event with `stop_hook_active: true` is guarded before an intent is created.
 

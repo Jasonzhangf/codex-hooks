@@ -40,7 +40,7 @@ const TERMINAL_SCHEDULE_STATES = new Set(["cancelled", "stopped", "disabled", "f
 const OCCURRENCE_TERMINAL_STATES = new Set(["sent", "completed", "unknown_delivery", "failed"]);
 
 export class TimerOperator {
-  constructor({ store, dispatch, resume = null, createSubagent = null, clock = new SystemClock() }) {
+  constructor({ store, dispatch, resume = null, createSubagent = null, registerSubagent = null, clock = new SystemClock() }) {
     if (!store || typeof store.getControl !== "function" || typeof store.putControl !== "function") {
       throw new Error("timer operator requires a control state store");
     }
@@ -50,6 +50,7 @@ export class TimerOperator {
     this.dispatch = dispatch;
     this.resume = resume;
     this.createSubagent = createSubagent;
+    this.registerSubagent = registerSubagent;
     this.clock = clock;
   }
 
@@ -65,7 +66,7 @@ export class TimerOperator {
       const { at, occurrenceId } = occurrence;
       const action = schedule.action || SCHEDULE_ACTIONS.NOTIFY;
 
-      if (action === SCHEDULE_ACTIONS.NOTIFY && schedule.state === "deferred_while_working" && typeof this.resume === "function") {
+      if ([SCHEDULE_ACTIONS.NOTIFY, SCHEDULE_ACTIONS.WAIT].includes(action) && schedule.state === "deferred_while_working" && typeof this.resume === "function") {
         const target = normalizeTarget(schedule.target);
         const resumed = await this.resume(target);
         const sent = resumed.sent?.find((delivery) => delivery.intent_id === occurrenceId);
@@ -103,6 +104,7 @@ export class TimerOperator {
         this.finishOccurrence(schedules, schedule, occurrence, {
           state: "failed",
           failure: { code: error.code || "timer_dispatch_failed", message: error.message },
+          ...(error.subagent_receipt == null ? {} : { last_delivery: clone(error.subagent_receipt) }),
         });
         results.push({
           schedule_id: schedule.id,
@@ -157,6 +159,30 @@ export class TimerOperator {
       ...(schedule.cwd == null ? {} : { cwd: schedule.cwd }),
       ...(schedule.model == null ? {} : { model: schedule.model }),
     });
+    if (typeof this.registerSubagent === "function") {
+      try {
+        await this.registerSubagent({
+          thread_id: receipt.thread_id,
+          turn_id: receipt.turn_id,
+          target,
+          prompt: schedule.body,
+          ...(schedule.owner_session_id == null ? {} : { owner_session_id: schedule.owner_session_id }),
+          schedule_id: schedule.id,
+          occurrence_id: occurrenceId,
+          created_at: at,
+        });
+      } catch (error) {
+        error.subagent_receipt = {
+          intent_id: occurrenceId,
+          state: "accepted",
+          attempt_id: occurrenceId,
+          thread_id: receipt.thread_id,
+          turn_id: receipt.turn_id,
+          receipt,
+        };
+        throw error;
+      }
+    }
     return {
       decision: "sent",
       delivery: {
@@ -171,6 +197,18 @@ export class TimerOperator {
   }
 
   finishOccurrence(schedules, schedule, occurrence, patch) {
+    const latestSchedules = this.store.getControl("schedules") || schedules;
+    const latest = latestSchedules[schedule.id];
+    if (latest && ["cancelled", "stopped", "disabled"].includes(latest.state)) {
+      this.updateSchedule(latestSchedules, latest, {
+        current_occurrence: occurrence.occurrenceId,
+        last_occurrence: occurrence.occurrenceId,
+        ...(patch.last_decision == null ? {} : { last_decision: patch.last_decision }),
+        ...(patch.last_delivery == null ? {} : { last_delivery: patch.last_delivery }),
+        ...(patch.failure == null ? {} : { failure: patch.failure }),
+      });
+      return;
+    }
     const mode = schedule.mode || SCHEDULE_MODES.ONCE;
     const terminal = patch.state === "sent" || patch.state === "unknown_delivery" || patch.state === "failed";
     if (mode === SCHEDULE_MODES.INTERVAL && terminal) {

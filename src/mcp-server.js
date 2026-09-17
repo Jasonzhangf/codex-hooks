@@ -8,7 +8,7 @@ const record = readInstallRecord({ installRecord: process.env.ROUTECODEX_HOOKS_I
 const client = new McpStateClient(record.endpoint);
 const tools = [{
   name: "routecodex_hooks_status",
-  description: "Read hooksd health, operator, and schedule state.",
+  description: "Read hooksd health, operator, schedule, binding, and subagent registry state.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
 }];
 

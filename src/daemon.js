@@ -126,6 +126,28 @@ export class HooksDaemon {
     return this.codexapp.create_subagent(request);
   }
 
+  async sessionStatus(target) {
+    return this.codexapp.session_status(target);
+  }
+
+  async interruptSubagent(request) {
+    if (typeof this.codexapp.interrupt_turn !== "function") {
+      throw Object.assign(new Error("codexapp does not provide turn interruption"), {
+        code: "subagent_interrupt_capability_missing",
+      });
+    }
+    return this.codexapp.interrupt_turn(request);
+  }
+
+  async archiveSubagent(request) {
+    if (typeof this.codexapp.archive_thread !== "function") {
+      throw Object.assign(new Error("codexapp does not provide thread archiving"), {
+        code: "subagent_archive_capability_missing",
+      });
+    }
+    return this.codexapp.archive_thread(request);
+  }
+
   async processHook(event, hookKind, key, rawIntent) {
     if (hookKind === "stop" && event.stop_hook_active) {
       const result = this.result(event, hookKind, "guarded", { delivery: null, guard: "stop_hook_active" });

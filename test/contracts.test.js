@@ -11,7 +11,7 @@ test("resource map has one owner for every framework state resource", async () =
   const map = await readJson("../contracts/resource-map.json");
   const resources = new Map(map.resources.map((resource) => [resource.id, resource.owner]));
   assert.equal(resources.size, map.resources.length);
-  for (const resource of ["official_hook_event", "message_intent", "session_status", "delivery_receipt", "stopless_state", "update_goal_state", "schedule_state", "longhorizon_state", "memory_state"]) {
+  for (const resource of ["official_hook_event", "message_intent", "session_status", "delivery_receipt", "stopless_state", "update_goal_state", "schedule_state", "subagent_registry", "longhorizon_state", "memory_state"]) {
     assert.ok(resources.has(resource), `missing resource owner: ${resource}`);
   }
   assert.ok(map.forbidden.some((edge) => edge.owner === "mcp" && edge.operation === "send or mutate"));
@@ -38,6 +38,8 @@ test("state machine covers every session state and send mode", async () => {
   assert.ok(machine.machines.schedule.states.includes("session_missing"));
   assert.ok(machine.machines.schedule.states.includes("stopped"));
   assert.ok(machine.machines.schedule.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["enabled", "stop", "stopped"])));
+  assert.ok(machine.machines.subagent.states.includes("closed"));
+  assert.ok(machine.machines.subagent.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["active", "close", "closed"])));
 });
 
 test("every declared state-machine edge has declared source and destination states", async () => {

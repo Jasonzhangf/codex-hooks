@@ -7,6 +7,8 @@ export const CODEXAPP_CAPABILITIES = Object.freeze([
   "session_status",
   "send_message_to_thread",
   "create_subagent",
+  "interrupt_turn",
+  "archive_thread",
 ]);
 export const CODEXAPP_REQUIRED_CAPABILITIES = Object.freeze([
   "session_status",
@@ -17,6 +19,8 @@ const BRIDGE_METHODS = Object.freeze({
   session_status: "session_status",
   send_message_to_thread: "send",
   create_subagent: "create_subagent",
+  interrupt_turn: "interrupt_turn",
+  archive_thread: "archive_thread",
 });
 
 const DEFINITIVE_SEND_ERRORS = new Set([
@@ -96,6 +100,8 @@ export class CodexAppBridgePort {
     }
     const advertised = ["session_status", "send_message_to_thread"];
     if (bridge.execution?.includes(BRIDGE_METHODS.create_subagent)) advertised.push("create_subagent");
+    if (bridge.execution?.includes(BRIDGE_METHODS.interrupt_turn)) advertised.push("interrupt_turn");
+    if (bridge.execution?.includes(BRIDGE_METHODS.archive_thread)) advertised.push("archive_thread");
     if (!Array.isArray(bridge.namespaces)) throw new Error("codexapp bridge did not advertise namespaces");
     const status = await this.client.call("status");
     if (status?.protocol !== "codex-comm/v1" || status.bridge !== "up" || !Array.isArray(status.scopes)) {
@@ -170,6 +176,31 @@ export class CodexAppBridgePort {
       turn_id: result.turnId,
       native_result: result,
     };
+  }
+
+  async interrupt_turn({ target, thread_id, turn_id }) {
+    const address = this.targetAddress({ ...target, thread_id });
+    const result = await this.client.call(BRIDGE_METHODS.interrupt_turn, {
+      address,
+      threadId: assertNonEmpty(thread_id, "thread_id"),
+      turnId: assertNonEmpty(turn_id, "turn_id"),
+    });
+    if (result?.scopeId !== address.scopeId || result?.threadId !== thread_id || result?.turnId !== turn_id || result?.state !== "interrupted") {
+      throw new Error("codexapp interrupt_turn receipt identity mismatch");
+    }
+    return result;
+  }
+
+  async archive_thread({ target, thread_id }) {
+    const address = this.targetAddress({ ...target, thread_id });
+    const result = await this.client.call(BRIDGE_METHODS.archive_thread, {
+      address,
+      threadId: assertNonEmpty(thread_id, "thread_id"),
+    });
+    if (result?.scopeId !== address.scopeId || result?.threadId !== thread_id || result?.state !== "archived") {
+      throw new Error("codexapp archive_thread receipt identity mismatch");
+    }
+    return result;
   }
 
   async delivery_evidence({ target, attempt_id, after_state }) {

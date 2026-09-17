@@ -3,6 +3,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { HooksDaemon } from "./daemon.js";
+import { FrameworkControlPlane } from "./control.js";
 import { JsonStateStore } from "./persistence.js";
 import { DaemonHttpServer } from "./server.js";
 import { loadDaemonConfig } from "./config.js";
@@ -25,8 +26,10 @@ const timer = new TimerOperator({
   dispatch: (intent) => daemon.dispatchIntent(intent, { kind: "timer" }),
   resume: (target) => daemon.flushPending(target),
   createSubagent: (request) => daemon.createSubagent(request),
+  registerSubagent: (request) => control.registerSubagent(request),
 });
-const server = new DaemonHttpServer(daemon);
+const control = new FrameworkControlPlane({ store: daemon.store, subagents: daemon });
+const server = new DaemonHttpServer(daemon, { control });
 const host = normalizeLoopbackHost(options.host || config?.runtime.host || "127.0.0.1");
 const endpoint = await server.listen(host, options.port ?? config?.runtime.port ?? 8787);
 

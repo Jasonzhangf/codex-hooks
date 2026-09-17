@@ -83,12 +83,14 @@ npm run init
 ```
 
 `init` installs the local `src/`, `hooks/`, and `skills/` under
-`~/.codex/routecodex-hooks`, copies the skills into `~/.codex/skills`, creates
+`~/.codex/routecodex-hooks`, copies the skills into `~/.codex/skills` and
+`~/.agent/skills`, creates
 the daemon configuration and executable CLI/MCP/daemon wrappers under
 `~/.local/bin`, and
 registers the managed official Stop hook in `~/.codex/hooks.json`. It does not
 overwrite unrelated hook entries and can be repeated safely. For an isolated
-installation, pass `--codex-home`, `--bin-dir`, and `--endpoint`.
+installation, pass `--codex-home`, `--bin-dir`, `--agent-home`, and
+`--endpoint`.
 
 Bundled plugin hooks resolve the same default install record at
 `~/.codex/routecodex-hooks/install.json`; run `npm run init` before enabling
@@ -99,6 +101,7 @@ The installed `rccs` CLI owns configuration and switches. The longer
 `routecodex-hooks` command remains as a compatibility alias:
 
 ```bash
+rccs init
 rccs config show
 rccs config set endpoint http://127.0.0.1:8787
 rccs config set target '{"namespace":"codex_tui","appserver_id":"tui-appserver","scope_id":"local:tui","endpoint":"unix:///path/to/app-server-control.sock"}'
@@ -107,6 +110,12 @@ rccs schedule add wake-1 2026-09-16T12:00:00Z 'wake body' --session timer-tui
 rccs schedule add recurring-1 2026-09-16T12:00:00Z 'wake body' --session timer-tui --every 5m
 rccs schedule add subagent-1 2026-09-16T12:00:00Z 'run task' --action subagent --target codex_tui/tui-appserver
 rccs schedule list
+rccs schedule list --global
+rccs wait 5m 'continue after the wait' --session timer-tui
+rccs wait 30m 'recheck the task' --session timer-tui --async
+rccs subagent list
+rccs subagent list --global
+rccs subagent close <thread-id>
 rccs schedule show wake-1
 rccs schedule update wake-1 --body 'updated body'
 rccs schedule pause wake-1
@@ -116,6 +125,11 @@ rccs schedule remove wake-1
 rccs hook disable stop
 rccs hook enable stop
 ```
+
+`rccs init` runs the same installer from the installed CLI, so an installed
+copy can refresh itself and its skills without requiring the source checkout.
+Repeated runs are idempotent and preserve the current install target when no
+path flags are supplied.
 
 `rccs session bind` persists the alias-to-target mapping in hooksd;
 `rccs schedule add` resolves that alias and enables the timer operator. The
@@ -129,6 +143,16 @@ coalesced, so daemon downtime or a busy target does not produce a burst.
 configured target scope instead of a session binding. Recurring subagent
 creation requires explicit `--allow-concurrent`.
 
+`schedule list` defaults to the current `CODEX_SESSION_ID`/`CODEX_THREAD_ID`;
+`--global` lists every schedule. `wait` is a one-shot daemon wait: the default
+form blocks until a terminal delivery state and `--async` returns immediately
+so the daemon can wake the session later. Use it instead of polling for waits
+of one minute or more.
+
+`subagent list` defaults to the current session and `--global` lists all
+children. `subagent close` checks native status, interrupts a working turn,
+archives the thread, and records the close evidence.
+
 `schedule update` is patch-only: it changes only supplied fields and preserves
 runtime evidence. `schedule pause` is reversible, `schedule stop` is a terminal
 agent stop that preserves the record, and `schedule remove` is a terminal
@@ -136,7 +160,8 @@ cancellation. A stopped or cancelled schedule never fires again.
 
 The installed MCP wrapper is read-only. Register it once with
 `codex mcp add routecodex-hooks -- routecodex-hooks-mcp` and use its
-`routecodex_hooks_status` tool to query health, operators, and schedules.
+`routecodex_hooks_status` tool to query health, operators, schedules, bindings,
+and the subagent registry.
 
 The installed `routecodex-hooksd` wrapper is the stable daemon process entry
 for the RouteCodex lifecycle supervisor:

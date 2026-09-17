@@ -17,7 +17,7 @@ payload-based control channel.
 | Stop interception | official Stop hook + Stop policy | contract-first |
 | Tool-call interception | official PreToolUse / PermissionRequest / PostToolUse adapters | contract-only |
 | Request augmentation | provider request assembly boundary | design-only |
-| Subagent creation | CodexApp `thread/start` + `turn/start` | implemented, profile snapshot pending |
+| Subagent creation and close | CodexApp `thread/start`, `turn/start`, `turn/interrupt`, `thread/archive` | implemented, profile snapshot pending |
 
 `rccs` is the only authorized mutation surface. MCP remains read-only.
 Official hooks validate and adapt events; they do not own policy state.
@@ -90,14 +90,24 @@ configured | disabled -> cancelled
 
 ```bash
 rccs schedule add <id> <at> <body> ...
-rccs schedule list
+rccs schedule list [--global|--session <session-id>]
 rccs schedule show <id>
 rccs schedule update <id> [--at ...] [--body ...] [--every ...] ...
 rccs schedule pause <id>
 rccs schedule resume <id>
 rccs schedule stop <id>
 rccs schedule remove <id>
+rccs wait <duration> [body] [--async] [--session <alias>]
+rccs subagent list [--global|--session <session-id>]
+rccs subagent close <thread-id>
 ```
+
+`schedule list` and `subagent list` default to the current session inferred
+from `CODEX_SESSION_ID` or `CODEX_THREAD_ID`. `--global` explicitly lists every
+registered record. `wait` is a one-shot schedule: its default CLI form blocks
+in the daemon until a terminal delivery state, while `--async` returns after
+registration and lets the daemon wake the session at the deadline. Agents must
+use this instead of polling for waits of one minute or more.
 
 Semantic distinctions:
 
@@ -142,6 +152,12 @@ effort overrides may replace that snapshot without changing the caller's
 runtime state. Spawned subagents never inherit the caller's conversation
 context; they receive only the typed prompt, target scope, profile snapshot,
 and explicit override fields.
+
+`rccs subagent close` reads the native session state first. A working child is
+interrupted through `turn/interrupt`, then every child is archived through
+`thread/archive`. The registry record advances to `closed` only after the
+native archive receipt is present. A missing interrupt or archive capability is
+an explicit failure, not a simulated close.
 
 ## 5. LongHorizon modes
 

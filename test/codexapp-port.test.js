@@ -28,7 +28,7 @@ test("CodexApp bridge port maps official capabilities and preserves target/attem
         : request.method === "session_status"
           ? { address: request.params.address, scopeId: "local:tui", appserverId: "tui-appserver", namespace: "codex_tui", status: { state: "idle" } }
           : request.method === "message_status"
-            ? { messageId: request.params.messageId, attemptId: request.params.messageId, from: { scopeId: "hooks", sessionId: "hooksd" }, to: { scopeId: "local:tui", sessionId: "thread-1" }, routing: { requestedTo: { scopeId: "local:tui", sessionId: "thread-1" }, routedTo: { scopeId: "local:tui", sessionId: "thread-1" } }, evidence: [{ state: "delivered", targetReceipt: { clientId: request.params.messageId } }] }
+            ? { messageId: request.params.messageId, attemptId: request.params.attemptId, from: { scopeId: "hooks", sessionId: "hooksd" }, to: { scopeId: "local:tui", sessionId: "thread-1" }, routing: { requestedTo: { scopeId: "local:tui", sessionId: "thread-1" }, routedTo: { scopeId: "local:tui", sessionId: "thread-1" } }, evidence: [{ state: "delivered", targetReceipt: { clientId: request.params.messageId } }] }
           : { state: "accepted", messageId: request.params.messageId, attemptId: request.params.attemptId, from: request.params.from, to: request.params.to, routing: { requestedTo: request.params.to, routedTo: request.params.to } };
       socket.end(`${JSON.stringify({ id: request.id, result })}\n`);
     });
@@ -68,6 +68,10 @@ test("CodexApp bridge port maps official capabilities and preserves target/attem
       source: "codexapp.message_status",
       target: { scopeId: "local:tui", sessionId: "thread-1" },
     });
+    assert.deepEqual(requests.find((request) => request.method === "message_status").params, {
+      messageId: "attempt-1",
+      attemptId: "attempt-1",
+    });
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(socketPath, { force: true });
@@ -86,7 +90,7 @@ test("CodexApp bridge port returns native execution/reply/read evidence for daem
       const request = JSON.parse(buffer.slice(0, index));
       const result = request.method === "message_status" ? {
         messageId: request.params.messageId,
-        attemptId: request.params.messageId,
+        attemptId: request.params.attemptId,
         from: { scopeId: "hooks", sessionId: "hooksd" },
         to: { scopeId: "local:tui", sessionId: "thread-1" },
         routing: { requestedTo: { scopeId: "local:tui", sessionId: "thread-1" }, routedTo: { scopeId: "local:tui", sessionId: "thread-1" } },

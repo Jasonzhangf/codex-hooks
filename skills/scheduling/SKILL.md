@@ -32,10 +32,12 @@ session binding:
 rccs schedule add subagent-1 <at-iso8601> '<prompt>' \
   --action subagent \
   --target codex_tui/tui-appserver \
+  --ephemeral \
   --cwd /absolute/path
 ```
 
-Recurring subagent schedules require explicit `--allow-concurrent`. The receipt
+Subagent schedules always use an ephemeral native thread; `--ephemeral` makes
+that fixed behavior explicit. Recurring subagent schedules require explicit `--allow-concurrent`. The receipt
 records the created thread and turn identities; no tmux text is used as a
 substitute for native creation. `--model` and `--effort` are forwarded to the
 native child. `--profile` is rejected explicitly because the current App Server

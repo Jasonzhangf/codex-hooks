@@ -245,8 +245,8 @@ export class CodexAppBridgePort {
   async delivery_evidence({ target, attempt_id, after_state }) {
     const id = assertNonEmpty(attempt_id, "attempt_id");
     const address = this.targetAddress(target);
-    const result = await this.client.call("message_status", { messageId: id });
-    assertMessageStatusBinding(result, id, address, this.source);
+    const result = await this.client.call("message_status", { messageId: id, attemptId: id });
+    assertMessageStatusBinding(result, id, id, address, this.source);
     const nextState = deliveryNextState(after_state);
     const evidence = Array.isArray(result?.evidence)
       ? result.evidence.find((entry) => entry?.state === nextState)
@@ -432,8 +432,8 @@ function assertSendBinding(result, attemptId, source, target) {
   }
 }
 
-function assertMessageStatusBinding(result, messageId, target, source) {
-  if (!result || result.messageId !== messageId || result.attemptId !== messageId || !sameAddress(result.from, source) || !sameAddress(result.to, target) || !sameAddress(result.routing?.requestedTo, target) || !sameAddress(result.routing?.routedTo, target)) {
+function assertMessageStatusBinding(result, messageId, attemptId, target, source) {
+  if (!result || result.messageId !== messageId || result.attemptId !== attemptId || !sameAddress(result.from, source) || !sameAddress(result.to, target) || !sameAddress(result.routing?.requestedTo, target) || !sameAddress(result.routing?.routedTo, target)) {
     throw new Error("codexapp message status identity mismatch");
   }
 }

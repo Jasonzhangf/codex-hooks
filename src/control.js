@@ -180,6 +180,7 @@ export class FrameworkControlPlane {
         ...(request.cwd == null ? {} : { cwd: assertNonEmpty(request.cwd, "cwd") }),
         ...(request.model == null ? {} : { model: assertNonEmpty(request.model, "model") }),
         ...(request.effort == null ? {} : { effort: assertNonEmpty(request.effort, "effort") }),
+        ephemeral: true,
         ...(request.allow_concurrent === true ? { allow_concurrent: true } : {}),
       } : {}),
       state: "configured",
@@ -619,6 +620,10 @@ function normalizeSchedulePatch(request, current) {
   if (request.cwd != null) patch.cwd = assertNonEmpty(request.cwd, "cwd");
   if (request.model != null) patch.model = assertNonEmpty(request.model, "model");
   if (request.effort != null) patch.effort = assertNonEmpty(request.effort, "effort");
+  if (request.ephemeral != null) {
+    if (request.ephemeral !== true) throw new Error("ephemeral must be true when supplied");
+    patch.ephemeral = true;
+  }
   if (request.allow_concurrent != null) {
     if (typeof request.allow_concurrent !== "boolean") throw new Error("allow_concurrent must be boolean");
     patch.allow_concurrent = request.allow_concurrent;
@@ -649,7 +654,7 @@ function assertScheduleActionOptions(action, request) {
     }
     return;
   }
-  const subagentOnlyFields = ["cwd", "model", "effort", "profile", "allow_concurrent"]
+  const subagentOnlyFields = ["cwd", "model", "effort", "profile", "allow_concurrent", "ephemeral"]
     .filter((field) => request[field] != null);
   if (subagentOnlyFields.length > 0) {
     throw new Error(`schedule fields require action=subagent: ${subagentOnlyFields.join(", ")}`);

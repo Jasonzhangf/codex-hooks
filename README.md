@@ -115,7 +115,8 @@ rccs wait 5m 'continue after the wait' --session timer-tui
 rccs wait 30m 'recheck the task' --session timer-tui --async
 rccs subagent list
 rccs subagent list --global
-rccs subagent close <thread-id>
+rccs subagent show <thread-id>
+rccs subagent stop <thread-id>
 rccs schedule show wake-1
 rccs schedule update wake-1 --body 'updated body'
 rccs schedule pause wake-1
@@ -150,8 +151,10 @@ so the daemon can wake the session later. Use it instead of polling for waits
 of one minute or more.
 
 `subagent list` defaults to the current session and `--global` lists all
-children. `subagent close` checks native status, interrupts a working turn,
-archives the thread, and records the close evidence.
+children. `subagent stop` checks native status, interrupts a working turn with
+the recorded `thread_id` and `turn_id`, and records the interrupt receipt or
+an explicit `no_active_turn` result. Archive, delete, and close are not part
+of the `rccs` path.
 
 `schedule update` is patch-only: it changes only supplied fields and preserves
 runtime evidence. `schedule pause` is reversible, `schedule stop` is a terminal
@@ -161,7 +164,8 @@ cancellation. A stopped or cancelled schedule never fires again.
 The installed MCP wrapper is read-only. Register it once with
 `codex mcp add routecodex-hooks -- routecodex-hooks-mcp` and use its
 `routecodex_hooks_status` tool to query health, operators, schedules, bindings,
-and the subagent registry.
+the subagent registry, LongHorizon state, goal reviews, stop suppression, and
+unresolved delivery evidence.
 
 The installed `routecodex-hooksd` wrapper is the stable daemon process entry
 for the RouteCodex lifecycle supervisor:

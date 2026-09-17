@@ -8,8 +8,15 @@ const record = readInstallRecord({ installRecord: process.env.ROUTECODEX_HOOKS_I
 const client = new McpStateClient(record.endpoint);
 const tools = [{
   name: "routecodex_hooks_status",
-  description: "Read hooksd health, operator, schedule, binding, and subagent registry state.",
-  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  description: "Read hooksd health, operator, schedule, binding, subagent registry, and delivery evidence state.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      scope: { type: "string", enum: ["current", "global"], default: "current" },
+      session_id: { type: "string" },
+    },
+    additionalProperties: false,
+  },
 }];
 
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -45,8 +52,12 @@ async function handle(line) {
       return;
     }
     try {
+      const args = request.params?.arguments || {};
       const value = {
-        ...(await client.queryStatus()),
+        ...(await client.queryStatusForScope({
+          scope: args.scope || "current",
+          sessionId: args.session_id || null,
+        })),
         installation: {
           hooks_file: record.hooks_file,
           stop_hook_enabled: record.stop_hook_enabled,

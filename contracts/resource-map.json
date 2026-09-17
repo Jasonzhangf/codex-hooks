@@ -10,7 +10,7 @@
     { "id": "stopless_state", "owner": "policy.stopless", "source": "persistent policy store", "mutable": true },
     { "id": "update_goal_state", "owner": "policy.update_goal", "source": "persistent policy store", "mutable": true },
     { "id": "schedule_state", "owner": "policy.timer", "source": "persistent policy store", "mutable": true },
-    { "id": "subagent_registry", "owner": "hooksd.subagent", "source": "native create receipt and close evidence", "mutable": true },
+    { "id": "subagent_registry", "owner": "hooksd.subagent", "source": "native create and interrupt receipts", "mutable": true },
     { "id": "longhorizon_state", "owner": "policy.longhorizon", "source": "persistent policy store", "mutable": true },
     { "id": "memory_state", "owner": "policy.memory", "source": "persistent policy store", "mutable": true }
   ],
@@ -20,8 +20,8 @@
     { "from": "session_status", "to": "delivery_receipt", "owner": "hooksd.transport", "operation": "gate" },
     { "from": "delivery_receipt", "to": "session_status", "owner": "hooksd.transport", "operation": "recheck_pending" },
     { "from": "schedule_state", "to": "subagent_registry", "owner": "policy.timer", "operation": "register_native_receipt" },
-    { "from": "subagent_registry", "to": "session_status", "owner": "hooksd.subagent", "operation": "observe_before_close" },
-    { "from": "session_status", "to": "subagent_registry", "owner": "hooksd.subagent", "operation": "record_close_evidence" }
+    { "from": "subagent_registry", "to": "session_status", "owner": "hooksd.subagent", "operation": "observe_before_stop" },
+    { "from": "session_status", "to": "subagent_registry", "owner": "hooksd.subagent", "operation": "record_stop_evidence" }
   ],
   "forbidden": [
     { "owner": "mcp", "operation": "send or mutate" },

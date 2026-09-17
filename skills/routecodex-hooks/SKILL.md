@@ -28,7 +28,10 @@ rccs schedule list --global
 rccs wait 5m 'continue after the wait' --session timer-tui
 rccs subagent list
 rccs subagent list --global
-rccs subagent close <thread-id>
+rccs subagent show <thread-id>
+rccs subagent stop <thread-id>
+rccs longhorizon register review --mode goal --goal-file /path/goal.md --session work
+rccs longhorizon activate review
 rccs hook disable stop
 rccs hook enable stop
 ```
@@ -50,9 +53,10 @@ and `--async` returns immediately so the daemon can wake the session later.
 Do not implement waits of one minute or more by polling in the agent.
 
 Subagent schedules are registered as native children. `rccs subagent list`
-defaults to the current session and `--global` lists all children. Closing a
-working child interrupts its turn before archiving the thread; close success is
-reported only after the native archive receipt is recorded.
+defaults to the current session and `--global` lists all children. Stopping a
+working child uses `turn/interrupt` with the registered `thread_id` and
+`turn_id`; an idle child records `no_active_turn`. Archive, delete, and close
+are not part of the stop path.
 
 The hook receives official JSON on stdin and forwards it to hooksd. hooksd owns policy state, persistence, idempotency, running-state gating, and the send decision; codexapp is the only message sender. An idle-only intent is deferred while the target is working or input-active. Unknown or disconnected state fails closed. A Stop event with `stop_hook_active: true` is guarded before an intent is created.
 
@@ -72,8 +76,9 @@ An internal `codexapp.sendmessage` wake and official Stop `decision: "block"` ar
 This framework implements the official Stop hook path, daemon state/persistence
 boundaries, CodexApp bridge contract, `rccs` configuration/switch controls, MCP
 read-only status, one-shot and recurring notification delivery, occurrence
-coalescing, and native subagent creation. Stopless policy, update-goal
-mutation, and memory behavior remain contract-only.
+coalescing, native subagent creation/stop, Stopless goal review, and
+LongHorizon periodic/goal registration. Update-goal mutation and memory
+behavior remain outside this Stage 2 surface.
 RouteCodex-managed sidecar startup is implemented by the RouteCodex lifecycle
 integration; the hooks repository's tests do not replace RouteCodex live
 lifecycle evidence.

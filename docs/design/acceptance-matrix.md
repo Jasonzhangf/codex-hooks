@@ -36,9 +36,15 @@ route reached native receipt/execution/reply/read evidence.
 | `idle_only` while target is working suppresses native send | default TUI App Server trace, 2026-09-13 (`WORKING_IDLE_ONLY_1789320995`: daemon `deferred`, codexapp `message_not_found`) | pass-live |
 | `working_allowed` while target is working sends once | default TUI App Server trace, 2026-09-13 (`WORKING_ALLOWED_LIVE_1789321365`: daemon `sent`, native status `working`, native `accepted`) | pass-live |
 | Duplicate Stop event does not duplicate delivery | default TUI App Server trace, 2026-09-13 (`DUP2_FIRST_1789321398`, `DUP2_SECOND_1789321398`: one delivery, second message `message_not_found`) | pass-live |
-| Unknown/disconnected sessions fail closed | `test/framework.test.js` working/send matrix and fail-closed cases; default TUI App Server live invalid-thread trace, 2026-09-13 (`INVALID_THREAD_1789345359`; hook-entry nonzero, error.code `unknown_session_state`) | pass-live |
+| Unknown sessions fail closed | default TUI App Server live invalid-thread trace, 2026-09-13 (`INVALID_THREAD_1789345359`; hook-entry nonzero, error.code `unknown_session_state`) | pass-live |
+| Disconnected sessions fail closed | `test/framework.test.js` working/send matrix and fail-closed cases; live replay not yet present | pass |
 | Restart recovery never blind-retries an in-flight send | `test/framework.test.js` outbox recovery cases | pass |
-| Framework enables no business Stopless | no enabled Stopless factory; `AGENTS.md` and docs | pass |
+| Subagent create/list/stop | `src/control.js`, `src/codexapp-entry.js`, `test/control.test.js`, `test/codexapp-entry.test.js` | pass |
+| Goal review is opt-in and non-blocking | `src/goal-review.js`, `src/daemon-entry.js`, `test/goal-review.test.js` | pass |
+| Goal review skips user interruption | `src/daemon.js`, `test/framework.test.js`, `test/goal-review.test.js` | pass |
+| LongHorizon periodic/goal CRUD | `src/control.js`, `src/cli.js`, `test/control.test.js`, `test/init.test.js` | pass |
+| Ephemeral subagent result via `turn/completed` | `src/codexapp-entry.js`, `test/codexapp-entry.test.js` | pass |
+| MCP projects LongHorizon/goal review/suppression | `src/mcp.js`, `src/control.js`, `test/mcp.test.js` | pass |
 | V3 Stopless resources removed | latest RouteCodex `origin/main` source scan and mapped gates | pass-source; runtime pending |
 
 ## Required real trace

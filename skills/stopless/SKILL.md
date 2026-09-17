@@ -3,8 +3,8 @@ name: stopless
 description: Explain how to use the independent Stop hook without creating a loop.
 ---
 
-Stopless is a policy that may create a `MessageIntent`; it is not part of the
-framework daemon and is intentionally not implemented in this skeleton.
+Stopless goal review is a policy that may create a `MessageIntent`. It is
+disabled until a `longhorizon --mode goal` record is explicitly activated.
 
 For local installation, configuration, Stop hook enablement, and status checks,
 use the `routecodex-hooks` skill. This skill only defines the Stopless policy
@@ -18,4 +18,4 @@ marks this hook run stopped and is not evidence that the separately sent
 message was delivered or executed. Do not combine the external send with
 `decision:"block"`, because official Stop `decision:"block"` creates its own
 continuation prompt. Native `decision:"block"` is a separate, mutually
-exclusive policy and is not enabled by this skeleton.
+exclusive policy and is not enabled by this goal-review path.

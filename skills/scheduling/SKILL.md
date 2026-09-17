@@ -53,6 +53,24 @@ deadline. `schedule list` defaults to the current session; use `--global` for
 all schedules.
 
 Use `rccs subagent list` and `rccs subagent list --global` to inspect spawned
-children. Close one only through `rccs subagent close <thread-id>`; the daemon
-checks native status, interrupts a working turn, archives the thread, and
-records the result.
+children. Stop one only through `rccs subagent stop <thread-id>`; the daemon
+checks native status and sends `turn/interrupt` with the registered
+`thread_id` and `turn_id` when a turn is working. An idle child records
+`no_active_turn`; an ephemeral child becomes `released`, otherwise it becomes
+`stopped`. Archive, delete, and close are not part of this path.
+
+For recurring goal inspection, register LongHorizon instead of keeping an
+agent-side polling loop:
+
+```sh
+rccs longhorizon register check --mode periodic --prompt 'Inspect the goal document and continue.' \
+  --session timer-tui --every 5m
+rccs longhorizon activate check
+rccs longhorizon stop check
+```
+
+`periodic` uses `busy_policy=skip`: a busy target skips the occurrence and the
+next interval is the next opportunity. For a Stop-triggered review, register
+`--mode goal --goal-file <path> --session <alias>` and activate it. Goal review
+is disabled until activation and can be paused or stopped with the same
+LongHorizon commands.

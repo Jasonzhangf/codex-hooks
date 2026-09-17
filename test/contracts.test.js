@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { HOOK_EVENTS, SESSION_STATES, SEND_MODES } from "../src/protocol.js";
+import { BUSY_POLICIES, HOOK_EVENTS, SEND_MODES, SEND_OPERATIONS, SESSION_STATES } from "../src/protocol.js";
 
 async function readJson(path) {
   return JSON.parse(await readFile(new URL(path, import.meta.url), "utf8"));
@@ -37,9 +37,13 @@ test("state machine covers every session state and send mode", async () => {
   for (const action of ["observe", "allow", "deny", "delay", "inject"]) assert.ok(machine.machines.hook.states.includes(action), `missing hook action: ${action}`);
   assert.ok(machine.machines.schedule.states.includes("session_missing"));
   assert.ok(machine.machines.schedule.states.includes("stopped"));
+  assert.ok(machine.machines.schedule.states.includes("skipped"));
   assert.ok(machine.machines.schedule.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["enabled", "stop", "stopped"])));
-  assert.ok(machine.machines.subagent.states.includes("closed"));
-  assert.ok(machine.machines.subagent.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["active", "close", "closed"])));
+  assert.ok(machine.machines.subagent.states.includes("stopped"));
+  assert.ok(machine.machines.subagent.states.includes("released"));
+  assert.ok(machine.machines.subagent.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["working", "stop", "stopping"])));
+  assert.deepEqual(Object.values(BUSY_POLICIES).sort(), ["defer", "skip"]);
+  assert.deepEqual(Object.values(SEND_OPERATIONS).sort(), ["interrupt", "queue", "steer"]);
 });
 
 test("every declared state-machine edge has declared source and destination states", async () => {

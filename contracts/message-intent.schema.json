@@ -11,7 +11,10 @@
     "target": { "$ref": "session-target.schema.json" },
     "body": { "type": "string", "minLength": 1 },
     "send_mode": { "type": "string", "enum": ["idle_only", "working_allowed"] },
+    "busy_policy": { "type": "string", "enum": ["defer", "skip"] },
+    "operation": { "type": "string", "enum": ["queue", "steer", "interrupt"] },
     "event_key": { "type": "string", "minLength": 1 },
+    "turn_id": { "type": ["string", "null"] },
     "expires_at": { "type": ["string", "null"], "format": "date-time" }
   }
 }

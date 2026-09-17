@@ -95,14 +95,15 @@ test("rccs init reinstalls the bundled source and skills idempotently", async ()
       "--bin-dir", binDir,
       "--agent-home", agentHome,
       "--endpoint", "http://127.0.0.1:9876",
-    ]);
+    ], { env: { ...process.env, CODEX_HOME: codexHome } });
     assert.equal(first.code, 0, first.stderr);
     const firstReceipt = JSON.parse(first.stdout);
     assert.equal(firstReceipt.initialized, true);
+    assert.equal(firstReceipt.mcp_registration.state, "registered");
     assert.equal(fs.existsSync(join(firstReceipt.agent_skills_directory, "rccs", "SKILL.md")), true);
     assert.equal(fs.existsSync(join(firstReceipt.bundled_skills_directory, "scheduling", "SKILL.md")), true);
 
-    const second = await run(firstReceipt.rccs_wrapper, ["init"]);
+    const second = await run(firstReceipt.rccs_wrapper, ["init"], { env: { ...process.env, CODEX_HOME: codexHome } });
     assert.equal(second.code, 0, second.stderr);
     const secondReceipt = JSON.parse(second.stdout);
     assert.equal(secondReceipt.install_root, firstReceipt.install_root);
@@ -110,6 +111,7 @@ test("rccs init reinstalls the bundled source and skills idempotently", async ()
     assert.equal(secondReceipt.bin_directory, firstReceipt.bin_directory);
     assert.equal(secondReceipt.endpoint, firstReceipt.endpoint);
     assert.equal(secondReceipt.stop_hook_enabled, true);
+    assert.equal(secondReceipt.mcp_registration.state, "already_registered");
   } finally {
     await rm(codexHome, { recursive: true, force: true });
   }
@@ -529,7 +531,7 @@ test("rccs lists and closes registered subagents through the daemon", async () =
     bridge = await startBridgeFixture(loadDaemonConfig(receipt.daemon_config).codexapp.socket, {
       sendToIdle: true,
       subagentStatus: "working",
-      subagentClose: true,
+      subagentControl: true,
     });
     daemon = spawn(receipt.daemon_wrapper, ["--config", receipt.daemon_config], {
       cwd: process.cwd(),
@@ -560,10 +562,13 @@ test("rccs lists and closes registered subagents through the daemon", async () =
     const listed = await run(receipt.rccs_wrapper, ["subagent", "list", "--session", threadId]);
     assert.equal(listed.code, 0, listed.stderr);
     assert.deepEqual(JSON.parse(listed.stdout).map((entry) => entry.thread_id), [childThread]);
-    const closed = await run(receipt.rccs_wrapper, ["subagent", "close", childThread]);
-    assert.equal(closed.code, 0, closed.stderr);
-    assert.equal(JSON.parse(closed.stdout).state, "closed");
-    assert.deepEqual(bridge.subagentCalls.map((entry) => entry.method), ["create_subagent", "session_status", "interrupt_turn", "archive_thread"]);
+    const stopped = await run(receipt.rccs_wrapper, ["subagent", "stop", childThread]);
+    assert.equal(stopped.code, 0, stopped.stderr);
+    assert.equal(JSON.parse(stopped.stdout).state, "stopped");
+    assert.deepEqual(bridge.subagentCalls.map((entry) => entry.method), ["create_subagent", "session_status", "interrupt_turn"]);
+    const archived = await run(receipt.rccs_wrapper, ["subagent", "archive", childThread]);
+    assert.notEqual(archived.code, 0);
+    assert.match(archived.stderr, /use rccs subagent stop/);
   } finally {
     if (daemon) {
       daemon.kill("SIGTERM");
@@ -617,7 +622,7 @@ function freePort() {
   });
 }
 
-async function startBridgeFixture(socketPath, { sendToIdle = false, subagentStatus = "idle", subagentClose = false } = {}) {
+async function startBridgeFixture(socketPath, { sendToIdle = false, subagentStatus = "idle", subagentControl = false } = {}) {
   const fixture = { sends: [], subagentCalls: [], lastCreatedThreadId: null };
   const server = net.createServer((socket) => {
     let buffer = "";
@@ -635,7 +640,7 @@ async function startBridgeFixture(socketPath, { sendToIdle = false, subagentStat
           result = {
             protocol: "codex-comm/v1",
             query: ["session_status"],
-            execution: ["send", ...(subagentClose ? ["create_subagent", "interrupt_turn", "archive_thread"] : [])],
+            execution: ["send", ...(subagentControl ? ["create_subagent", "interrupt_turn"] : [])],
             namespaces: ["codex_tui", "codex_app"],
           };
         } else if (request.method === "status") {
@@ -649,7 +654,7 @@ async function startBridgeFixture(socketPath, { sendToIdle = false, subagentStat
               namespace: "codex_tui",
               sessions: [{ id: "thread-1" }],
               agents: [],
-              capabilities: ["send_message_to_thread", ...(subagentClose ? ["create_subagent", "interrupt_turn", "archive_thread"] : [])],
+              capabilities: ["send_message_to_thread", ...(subagentControl ? ["create_subagent", "interrupt_turn"] : [])],
             }],
           };
         } else if (request.method === "session_status") {
@@ -683,16 +688,6 @@ async function startBridgeFixture(socketPath, { sendToIdle = false, subagentStat
             threadId: request.params.threadId,
             turnId: request.params.turnId,
             state: "interrupted",
-          };
-        } else if (request.method === "archive_thread") {
-          fixture.subagentCalls.push({ method: request.method, params: request.params });
-          result = {
-            protocol: "codex-comm/v1",
-            scopeId: request.params.address.scopeId,
-            appserverId: "tui-appserver",
-            namespace: "codex_tui",
-            threadId: request.params.threadId,
-            state: "archived",
           };
         } else if (request.method === "send") {
           fixture.sends.push(request.params);

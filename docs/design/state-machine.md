@@ -99,19 +99,20 @@ future firing. It is distinct from reversible `disabled`, from terminal
 
 ## Subagent registry dimension
 
-Native subagent creation and close have separate evidence:
+The implemented registry machine is:
 
 ```text
 absent -> active (native thread/turn receipt)
-active -> closed (native archive receipt)
-active -> active (close error, no simulated close)
+active -> working -> stopping -> stopped
+active -> stopping -> released (ephemeral)
+stopping -> active (interrupt error, no simulated stop)
 ```
 
 `active` proves the native thread and turn identities were returned by
-`thread/start` and `turn/start`. Close reads native status, interrupts a
-working child first, and only the native `thread/archive` receipt advances the
-registry to `closed`. A close error leaves the record active and returns the
-failure explicitly. A failed registration after native creation preserves the
+`thread/start` and `turn/start`. The stop path reads native status, sends
+`turn/interrupt` for a working turn, and advances only after the interrupt
+receipt or an explicit `no_active_turn` observation. It never calls archive,
+delete, or close. A failed registration after native creation preserves the
 receipt on the schedule record; it is not erased or reported as if no child
 existed.
 

@@ -13,8 +13,8 @@ const DEFAULT_TARGETS = join(homedir(), ".codex", "routecodex-hooks", "config", 
 const SERVICE = Object.freeze({ scopeId: "local:hooks", sessionId: "hooksd", kind: "service", live: true });
 const CAPABILITIES = Object.freeze({
   protocol: PROTOCOL,
-  query: ["capabilities", "status", "list_threads", "session_status", "message_status"],
-  execution: ["register_target", "unregister_target", "send", "create_subagent", "interrupt_turn", "archive_thread"],
+  query: ["capabilities", "status", "list_threads", "session_status", "message_status", "read_subagent_result"],
+  execution: ["register_target", "unregister_target", "send", "steer", "create_subagent", "interrupt_turn"],
   namespaces: ["codex_app", "codex_tui"],
   routeRules: ["service_to_registered_target"],
 });
@@ -104,9 +104,10 @@ async function dispatch(request) {
     case "list_threads": return listThreads(params.address);
     case "session_status": return sessionStatus(params.address);
     case "send": return sendMessage(params.message || params);
+    case "steer": return steerMessage(params.message || params);
     case "create_subagent": return createSubagent(params);
     case "interrupt_turn": return interruptTurn(params);
-    case "archive_thread": return archiveThread(params);
+    case "read_subagent_result": return readSubagentResult(params);
     case "message_status": return messageStatus(params.messageId);
     default: throw codedError(`unknown codexapp method: ${method}`, "method_not_found");
   }
@@ -145,13 +146,19 @@ function unregisterTarget(input) {
 
 async function sessionStatus(address) {
   const { target, sessionId } = resolveTarget(address);
-  const thread = await adapter(target).threadStatus(sessionId);
+  const native = adapter(target);
+  const thread = await native.threadStatus(sessionId);
+  const status = normalizeThreadStatus(thread.status);
+  if (status.state === "working") {
+    const activeTurnId = await native.activeTurnId(sessionId);
+    if (activeTurnId) status.active_turn_id = activeTurnId;
+  }
   return {
     address: { scopeId: target.scope_id, sessionId },
     scopeId: target.scope_id,
     appserverId: target.appserver_id,
     namespace: target.namespace,
-    status: normalizeThreadStatus(thread.status),
+    status,
   };
 }
 
@@ -179,6 +186,16 @@ async function listThreads(address) {
 
 async function sendMessage(input) {
   const message = normalizeMessage(input);
+  return enqueueMessage(message);
+}
+
+async function steerMessage(input) {
+  const message = normalizeMessage(input);
+  const turnId = required(input.turnId || input.turn_id, "turnId");
+  return enqueueMessage(message, turnId);
+}
+
+async function enqueueMessage(message, expectedTurnId = null) {
   if (message.from.scopeId !== SERVICE.scopeId || message.from.sessionId !== SERVICE.sessionId) {
     throw codedError("send source is not the registered service identity", "sender_not_registered");
   }
@@ -215,7 +232,10 @@ async function sendMessage(input) {
       status: normalizeThreadStatus(status.status),
     };
   }
-  const native = await adapter(target).send(target, sessionId, message.body, message.messageId);
+  const native = expectedTurnId == null
+    ? await adapter(target).send(target, sessionId, message.body, message.messageId)
+    : await adapter(target).steer(target, sessionId, message.body, message.messageId, expectedTurnId);
+  messageRecord.operation = expectedTurnId == null ? "queue" : "steer";
   messageRecord.nativeResult = native;
   messageRecord.state = "accepted";
   messageRecord.evidence.push({ state: "accepted", native });
@@ -278,7 +298,7 @@ function publicScope(target) {
     namespace: target.namespace,
     endpoint: target.endpoint,
     sessions: [],
-    capabilities: ["session_status", "send_message_to_thread", "create_subagent", "interrupt_turn", "archive_thread"],
+    capabilities: ["session_status", "send_message_to_thread", "steer_message", "create_subagent", "interrupt_turn", "read_subagent_result"],
   };
 }
 
@@ -290,6 +310,9 @@ async function createSubagent(input) {
   const appserverId = required(address.appserverId || address.appserver_id, "address.appserverId");
   const attemptId = required(input.attemptId || input.attempt_id, "attemptId");
   const prompt = required(input.prompt, "prompt");
+  if (input.profile != null) {
+    throw codedError("create_subagent does not support profile at the native App Server boundary", "unsupported_profile");
+  }
   const target = targets.get(scopeId);
   if (!target) throw codedError(`target scope not found: ${scopeId}`, "target_scope_not_found");
   if (target.namespace !== namespace || target.appserver_id !== appserverId) {
@@ -298,8 +321,10 @@ async function createSubagent(input) {
   const native = await adapter(target).createSubagent({
     prompt,
     clientUserMessageId: attemptId,
+    ...(input.ephemeral === true ? { ephemeral: true } : {}),
     ...(input.cwd == null ? {} : { cwd: required(input.cwd, "cwd") }),
     ...(input.model == null ? {} : { model: required(input.model, "model") }),
+    ...(input.effort == null ? {} : { effort: required(input.effort, "effort") }),
   });
   return {
     protocol: PROTOCOL,
@@ -332,19 +357,23 @@ async function interruptTurn(input) {
   };
 }
 
-async function archiveThread(input) {
-  if (!input || typeof input !== "object") throw codedError("archive_thread params are required", "invalid_request");
+async function readSubagentResult(input) {
+  if (!input || typeof input !== "object") throw codedError("read_subagent_result params are required", "invalid_request");
   const { target, sessionId } = resolveTarget(input.address);
   const threadId = required(input.threadId || sessionId, "threadId");
-  if (threadId !== sessionId) throw codedError("archive_thread threadId must match address.sessionId", "invalid_request");
-  await adapter(target).archiveThread(threadId);
+  const turnId = required(input.turnId, "turnId");
+  if (threadId !== sessionId) throw codedError("read_subagent_result threadId must match address.sessionId", "invalid_request");
+  const result = await adapter(target).readSubagentResult(threadId, turnId);
   return {
     protocol: PROTOCOL,
     scopeId: target.scope_id,
     appserverId: target.appserver_id,
     namespace: target.namespace,
     threadId,
-    state: "archived",
+    turnId,
+    state: result.state,
+    finalMessage: result.finalMessage,
+    item: result.item,
   };
 }
 
@@ -411,6 +440,9 @@ class NativeAppServer {
     this.socketPath = socketPath;
     this.rpc = new UnixWebSocketJsonRpc(socketPath);
     this.initialized = false;
+    this.ephemeralThreads = new Set();
+    this.completedTurns = new Map();
+    this.rpc.on("notification", (message) => this.onNotification(message));
   }
 
   async connect() {
@@ -451,6 +483,81 @@ class NativeAppServer {
     return thread;
   }
 
+  async activeTurnId(threadId) {
+    await this.connect();
+    let page;
+    try {
+      page = await this.rpc.call("thread/turns/list", { threadId, limit: 100, sortDirection: "desc" });
+    } catch (error) {
+      throw codedError(`active turn read failed: ${error.message}`, "active_turn_unavailable");
+    }
+    const turns = Array.isArray(page?.data) ? page.data : [];
+    const active = turns.filter((turn) => turn?.status === "inProgress");
+    if (active.length === 0) return null;
+    if (active.length > 1) throw codedError("native App Server returned multiple active turns", "active_turn_ambiguous");
+    if (typeof active[0].id !== "string" || active[0].id.trim() === "") {
+      throw codedError("native active turn has no identity", "native_transport_error");
+    }
+    return active[0].id;
+  }
+
+  async readSubagentResult(threadId, turnId) {
+    await this.connect();
+    const completed = this.completedTurns.get(turnKey(threadId, turnId));
+    if (completed) {
+      const state = normalizeTurnState(completed.turn?.status);
+      const item = completed.turn?.items?.find(isAgentMessage) || null;
+      return {
+        thread: null,
+        turn: completed.turn,
+        state,
+        finalMessage: extractItemText(item),
+        item,
+      };
+    }
+    if (this.ephemeralThreads.has(threadId)) {
+      return { thread: null, turn: null, state: "unknown", finalMessage: null, item: null };
+    }
+    const thread = await this.threadStatus(threadId);
+    let turnsPage;
+    try {
+      turnsPage = await this.rpc.call("thread/turns/list", { threadId, limit: 100, sortDirection: "desc" });
+    } catch (error) {
+      throw codedError(`reviewer turn read failed: ${error.message}`, "reviewer_result_unavailable");
+    }
+    const turns = Array.isArray(turnsPage?.data) ? turnsPage.data : [];
+    const turn = turns.find((entry) => entry?.id === turnId);
+    if (!turn) throw codedError(`reviewer turn not found: ${turnId}`, "reviewer_turn_not_found");
+    const state = normalizeTurnState(turn.status);
+    if (!["completed", "failed", "interrupted"].includes(state)) {
+      return { thread, turn, state, finalMessage: null, item: null };
+    }
+    let items;
+    try {
+      items = normalizeItems(await this.rpc.call("thread/items/list", {
+        threadId,
+        turnId,
+        limit: 100,
+        sortDirection: "desc",
+      }));
+    } catch (itemsError) {
+      try {
+        const page = await this.rpc.call("thread/turns/list", {
+          threadId,
+          turnId,
+          itemsView: "full",
+          limit: 100,
+          sortDirection: "desc",
+        });
+        items = normalizeItems(page);
+      } catch (turnsError) {
+        throw codedError(`reviewer result read is unsupported: items=${itemsError.message}; turns=${turnsError.message}`, "reviewer_result_unavailable");
+      }
+    }
+    const item = items.find(isAgentMessage) || null;
+    return { thread, turn, state, finalMessage: extractItemText(item), item };
+  }
+
   async loadedThreads() {
     await this.connect();
     const result = await this.rpc.call("thread/loaded/list", {});
@@ -469,20 +576,34 @@ class NativeAppServer {
     });
   }
 
-  async createSubagent({ prompt, clientUserMessageId, cwd = null, model = null }) {
+  async steer(target, threadId, body, clientUserMessageId, expectedTurnId) {
+    await this.connect();
+    return this.rpc.call("turn/steer", {
+      threadId,
+      expectedTurnId,
+      input: [{ type: "text", text: body, text_elements: [] }],
+      clientUserMessageId,
+    });
+  }
+
+  async createSubagent({ prompt, clientUserMessageId, cwd = null, model = null, effort = null, ephemeral = false }) {
     await this.connect();
     const started = await this.rpc.call("thread/start", {
       ...(cwd == null ? {} : { cwd }),
       ...(model == null ? {} : { model }),
+      ...(ephemeral === true ? { ephemeral: true } : {}),
     });
     const thread = started?.thread;
     if (!thread || typeof thread.id !== "string" || thread.id.trim() === "") {
       throw codedError("thread/start returned no thread identity", "native_transport_error");
     }
+    if (ephemeral === true || thread.ephemeral === true) this.ephemeralThreads.add(thread.id);
     const turnResult = await this.rpc.call("turn/start", {
       threadId: thread.id,
       clientUserMessageId,
       input: [{ type: "text", text: prompt, text_elements: [] }],
+      ...(model == null ? {} : { model }),
+      ...(effort == null ? {} : { effort }),
     });
     const turn = turnResult?.turn;
     if (!turn || typeof turn.id !== "string" || turn.id.trim() === "") {
@@ -496,13 +617,20 @@ class NativeAppServer {
     await this.rpc.call("turn/interrupt", { threadId, turnId });
   }
 
-  async archiveThread(threadId) {
-    await this.connect();
-    await this.rpc.call("thread/archive", { threadId });
-  }
-
   close() {
     this.rpc.close();
+  }
+
+  onNotification(message) {
+    if (message?.method !== "turn/completed") return;
+    const params = message.params;
+    const threadId = params?.threadId || params?.thread_id;
+    const turn = params?.turn;
+    if (typeof threadId !== "string" || threadId.trim() === "" || !turn || typeof turn.id !== "string" || turn.id.trim() === "") {
+      this.rpc.emit("protocolError", codedError("turn/completed notification has no turn identity", "native_transport_error"));
+      return;
+    }
+    this.completedTurns.set(turnKey(threadId, turn.id), { threadId, turn });
   }
 }
 
@@ -618,6 +746,8 @@ class UnixWebSocketJsonRpc extends EventEmitter {
       } else {
         pending.resolve(message.result);
       }
+    } else if (message.id === undefined && typeof message.method === "string") {
+      this.emit("notification", message);
     }
   }
 
@@ -704,6 +834,29 @@ function normalizeItems(page) {
     return data.flatMap((turn) => turn.items.map((item) => ({ ...item, turnId: turn.id })));
   }
   return data;
+}
+
+function normalizeTurnState(status) {
+  if (status === "inProgress") return "working";
+  if (status === "completed") return "completed";
+  if (status === "failed") return "failed";
+  if (status === "interrupted" || status === "cancelled") return "interrupted";
+  return "unknown";
+}
+
+function turnKey(threadId, turnId) {
+  return `${threadId}\0${turnId}`;
+}
+
+function extractItemText(item) {
+  if (!item) return null;
+  if (typeof item.text === "string" && item.text.trim() !== "") return item.text;
+  if (!Array.isArray(item.content)) return null;
+  const text = item.content
+    .filter((entry) => entry?.type === "text" && typeof entry.text === "string")
+    .map((entry) => entry.text)
+    .join("");
+  return text.trim() === "" ? null : text;
 }
 
 function itemIds(items) {

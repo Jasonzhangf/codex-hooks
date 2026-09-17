@@ -108,7 +108,7 @@
     },
     "schedule": {
       "initial": "absent",
-      "states": ["absent", "configured", "enabled", "disabled", "due", "claimed", "deferred_while_working", "send_pending", "sent", "completed", "failed", "retryable", "expired", "session_missing", "cancelled", "stopped"],
+      "states": ["absent", "configured", "enabled", "disabled", "due", "claimed", "deferred_while_working", "send_pending", "skipped", "sent", "completed", "failed", "retryable", "expired", "session_missing", "cancelled", "stopped"],
       "transitions": [
         ["absent", "upsert", "configured"],
         ["configured", "enable", "enabled"],
@@ -116,6 +116,7 @@
         ["enabled", "disable", "disabled"],
         ["due", "claim", "claimed"],
         ["claimed", "working", "deferred_while_working"],
+        ["claimed", "busy_skip", "skipped"],
         ["claimed", "send", "send_pending"],
         ["send_pending", "accepted", "sent"],
         ["sent", "occurrence_complete", "completed"],
@@ -127,6 +128,7 @@
         ["configured", "remove", "cancelled"],
         ["disabled", "remove", "cancelled"],
         ["stopped", "remove", "cancelled"],
+        ["skipped", "interval_advance", "enabled"],
         ["configured", "stop", "stopped"],
         ["enabled", "stop", "stopped"],
         ["disabled", "stop", "stopped"],
@@ -136,11 +138,19 @@
     },
     "subagent": {
       "initial": "absent",
-      "states": ["absent", "active", "closed"],
+      "states": ["absent", "starting", "active", "working", "idle", "stopping", "stopped", "released", "failed", "disconnected"],
       "transitions": [
         ["absent", "native_create_receipt", "active"],
-        ["active", "close", "closed"],
-        ["active", "close_error", "active"]
+        ["active", "observe_working", "working"],
+        ["working", "observe_idle", "idle"],
+        ["active", "stop", "stopping"],
+        ["working", "stop", "stopping"],
+        ["idle", "stop", "stopped"],
+        ["stopping", "interrupt_receipt", "stopped"],
+        ["stopping", "interrupt_receipt_ephemeral", "released"],
+        ["stopping", "interrupt_error", "working"],
+        ["active", "observe_failure", "failed"],
+        ["working", "observe_disconnect", "disconnected"]
       ]
     },
     "operator": {

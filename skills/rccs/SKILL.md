@@ -59,7 +59,7 @@ rccs schedule stop check
 | `--cwd <absolute-path>` | native default | Working directory for a subagent schedule. |
 | `--model <model>` | native default | Explicit child model override. |
 | `--effort <effort>` | native default | Explicit child effort override. |
-| `--ephemeral` | optional for subagent schedule | Explicit assertion that the native child is disposable. Subagent schedules always use an ephemeral thread. |
+| `--ephemeral` | true for subagent creation | Optional explicit assertion; `subagent create` and subagent schedules always use an ephemeral thread. |
 | `--allow-concurrent` | false | Required for recurring subagent creation. |
 | `--owner-session <session-id>` | current session when available | Ownership scope used by `list` and stop controls. |
 | `--profile <profile>` | rejected | The native `thread/start` boundary has no Codex profile selector. It is rejected, never silently ignored. |

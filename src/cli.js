@@ -113,6 +113,7 @@ async function scheduleCommand(args) {
       "--model",
       "--allow-concurrent",
     ]);
+    if (options.once && options.every) throw new Error("--once and --every cannot be used together");
     const action = options.action || "notify";
     const mode = options.every ? "interval" : "once";
     const at = required(rest[1], "schedule time");
@@ -136,12 +137,60 @@ async function scheduleCommand(args) {
     await mutate(request);
     return;
   }
-  if (["remove", "pause", "resume"].includes(subcommand)) {
-    const operation = { remove: "schedule.remove", pause: "schedule.pause", resume: "schedule.resume" }[subcommand];
+  if (subcommand === "list") {
+    const state = await queryControl();
+    const schedules = Object.values(state.state.schedules || {}).sort((left, right) => left.id.localeCompare(right.id));
+    print(schedules);
+    return;
+  }
+  if (subcommand === "show") {
+    const id = required(rest[0], "schedule id");
+    const state = await queryControl();
+    const schedules = state.state.schedules || {};
+    if (!Object.hasOwn(schedules, id)) throw new Error(`schedule not found: ${id}`);
+    print(schedules[id]);
+    return;
+  }
+  if (subcommand === "update") {
+    const options = parseOptions(rest.slice(1), [
+      "--at",
+      "--body",
+      "--send-mode",
+      "--session",
+      "--target",
+      "--every",
+      "--once",
+      "--action",
+      "--cwd",
+      "--model",
+      "--allow-concurrent",
+    ]);
+    if (options.once && options.every) throw new Error("--once and --every cannot be used together");
+    const mode = options.once ? "once" : options.every ? "interval" : undefined;
+    const request = {
+      operation: "schedule.update",
+      id: required(rest[0], "schedule id"),
+      ...(options.at ? { at: options.at } : {}),
+      ...(options.body ? { body: options.body } : {}),
+      ...(options.send_mode ? { send_mode: options.send_mode } : {}),
+      ...(mode ? { mode } : {}),
+      ...(options.every ? { interval_ms: parseDuration(options.every) } : {}),
+      ...(options.action ? { action: options.action } : {}),
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.allow_concurrent === true ? { allow_concurrent: true } : {}),
+      ...(options.session ? { session: options.session } : {}),
+      ...(options.target ? { target: parseTargetIdentity(options.target) } : {}),
+    };
+    await mutate(request);
+    return;
+  }
+  if (["remove", "pause", "resume", "stop"].includes(subcommand)) {
+    const operation = { remove: "schedule.remove", pause: "schedule.pause", resume: "schedule.resume", stop: "schedule.stop" }[subcommand];
     await mutate({ operation, id: required(rest[0], "schedule id") });
     return;
   }
-  throw new Error("usage: rccs schedule add|remove|pause|resume ...");
+  throw new Error("usage: rccs schedule add|list|show|update|remove|pause|resume|stop ...");
 }
 
 function configCommand(args) {
@@ -179,7 +228,7 @@ async function operatorCommand(args) {
 }
 
 function usage() {
-  return "usage: rccs status | rccs session bind|unbind ... | rccs schedule add|remove|pause|resume ... | rccs config show|set ... | rccs hook enable|disable stop | rccs supervisor enable|disable | rccs operator enable|disable <name>";
+  return "usage: rccs status | rccs session bind|unbind ... | rccs schedule add|list|show|update|remove|pause|resume|stop ... | rccs config show|set ... | rccs hook enable|disable stop | rccs supervisor enable|disable | rccs operator enable|disable <name>";
 }
 
 async function mutate(value) {
@@ -189,6 +238,12 @@ async function mutate(value) {
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || `daemon mutation failed: ${response.status}`);
   print(body.result);
+}
+
+async function queryControl() {
+  const record = tryReadInstallRecord();
+  const targetEndpoint = normalizeEndpoint(endpoint || record?.endpoint || "http://127.0.0.1:8787");
+  return new McpStateClient(targetEndpoint).queryState();
 }
 
 function setConfig(record, key, value) {

@@ -165,6 +165,19 @@ test("disabled timer operator and paused schedule have no side effect", async ()
   assert.equal(codexapp.sends.length, 1);
 });
 
+test("stopped schedule never dispatches or becomes sent", async () => {
+  const { codexapp, daemon, control, store } = setup();
+  const clock = new ManualClock("2026-09-11T10:00:00.000Z");
+  const timer = new TimerOperator({ store, clock, dispatch: (intent) => daemon.dispatchIntent(intent, { kind: "timer" }) });
+  control.mutate({ operation: "schedule.stop", id: "daily-check" });
+
+  assert.deepEqual(await timer.tick(), []);
+  assert.equal(codexapp.sends.length, 0);
+  const persisted = store.getControl("schedules")["daily-check"];
+  assert.equal(persisted.state, "stopped");
+  assert.equal(persisted.enabled, false);
+});
+
 test("timer rejects malformed schedule time and preserves persistence failure", async () => {
   const store = new MemoryStateStore();
   const control = new FrameworkControlPlane({ store });

@@ -108,7 +108,7 @@
     },
     "schedule": {
       "initial": "absent",
-      "states": ["absent", "configured", "enabled", "disabled", "due", "claimed", "deferred_while_working", "send_pending", "sent", "completed", "failed", "retryable", "expired", "session_missing", "cancelled"],
+      "states": ["absent", "configured", "enabled", "disabled", "due", "claimed", "deferred_while_working", "send_pending", "sent", "completed", "failed", "retryable", "expired", "session_missing", "cancelled", "stopped"],
       "transitions": [
         ["absent", "upsert", "configured"],
         ["configured", "enable", "enabled"],
@@ -125,7 +125,12 @@
         ["failed", "retryable", "retryable"],
         ["retryable", "new_attempt", "send_pending"],
         ["configured", "remove", "cancelled"],
-        ["disabled", "remove", "cancelled"]
+        ["disabled", "remove", "cancelled"],
+        ["stopped", "remove", "cancelled"],
+        ["configured", "stop", "stopped"],
+        ["enabled", "stop", "stopped"],
+        ["disabled", "stop", "stopped"],
+        ["deferred_while_working", "stop", "stopped"]
       ]
     },
     "operator": {

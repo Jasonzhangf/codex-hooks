@@ -89,8 +89,13 @@ claimed -> deferred_while_working -> send_pending
 claimed -> failed | expired | session_missing
 enabled -> disabled
 configured/disabled -> cancelled
+configured/enabled/disabled/deferred_while_working -> stopped
 failed -> retryable -> send_pending (new attempt)
 ```
+
+`stop` is a terminal agent stop that preserves delivery evidence and disables
+future firing. It is distinct from reversible `disabled`, from terminal
+`cancelled`, and from a successful `sent` occurrence.
 
 Operators are namespaced and independent:
 

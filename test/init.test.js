@@ -282,9 +282,24 @@ test("rccs installs and creates a recurring notification schedule through the li
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.equal(bridge.sends.length, 2);
+    const listed = await run(receipt.rccs_wrapper, ["schedule", "list"]);
+    assert.equal(listed.code, 0, listed.stderr);
+    assert.equal(Array.isArray(JSON.parse(listed.stdout)), true);
+    assert.equal(JSON.parse(listed.stdout)[0].id, "recurring-wake");
+    const shown = await run(receipt.rccs_wrapper, ["schedule", "show", "recurring-wake"]);
+    assert.equal(shown.code, 0, shown.stderr);
+    assert.equal(JSON.parse(shown.stdout).id, "recurring-wake");
+    const updated = await run(receipt.rccs_wrapper, ["schedule", "update", "recurring-wake", "--body", "updated body"]);
+    assert.equal(updated.code, 0, updated.stderr);
+    assert.equal(JSON.parse(updated.stdout).body, "updated body");
+    assert.equal(JSON.parse(updated.stdout).state, "enabled");
+    const stopped = await run(receipt.rccs_wrapper, ["schedule", "stop", "recurring-wake"]);
+    assert.equal(stopped.code, 0, stopped.stderr);
+    assert.equal(JSON.parse(stopped.stdout).state, "stopped");
+    assert.equal(JSON.parse(stopped.stdout).enabled, false);
     const state = JSON.parse((await run(receipt.rccs_wrapper, ["status"])).stdout).control.state.schedules["recurring-wake"];
-    assert.equal(state.enabled, true);
-    assert.equal(state.state, "enabled");
+    assert.equal(state.enabled, false);
+    assert.equal(state.state, "stopped");
     assert.equal(state.mode, "interval");
   } finally {
     if (daemon) {

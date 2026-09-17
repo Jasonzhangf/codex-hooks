@@ -36,6 +36,8 @@ test("state machine covers every session state and send mode", async () => {
   for (const state of ["degraded", "stopping", "stopped", "crashed", "restarting"]) assert.ok(machine.machines.runtime.states.includes(state), `missing runtime state: ${state}`);
   for (const action of ["observe", "allow", "deny", "delay", "inject"]) assert.ok(machine.machines.hook.states.includes(action), `missing hook action: ${action}`);
   assert.ok(machine.machines.schedule.states.includes("session_missing"));
+  assert.ok(machine.machines.schedule.states.includes("stopped"));
+  assert.ok(machine.machines.schedule.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["enabled", "stop", "stopped"])));
 });
 
 test("every declared state-machine edge has declared source and destination states", async () => {

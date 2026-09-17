@@ -106,6 +106,13 @@ rccs session bind timer-tui <session-id>
 rccs schedule add wake-1 2026-09-16T12:00:00Z 'wake body' --session timer-tui
 rccs schedule add recurring-1 2026-09-16T12:00:00Z 'wake body' --session timer-tui --every 5m
 rccs schedule add subagent-1 2026-09-16T12:00:00Z 'run task' --action subagent --target codex_tui/tui-appserver
+rccs schedule list
+rccs schedule show wake-1
+rccs schedule update wake-1 --body 'updated body'
+rccs schedule pause wake-1
+rccs schedule resume wake-1
+rccs schedule stop wake-1
+rccs schedule remove wake-1
 rccs hook disable stop
 rccs hook enable stop
 ```
@@ -121,6 +128,11 @@ coalesced, so daemon downtime or a busy target does not produce a burst.
 `turn/start` operations to create and run a new subagent task. It requires a
 configured target scope instead of a session binding. Recurring subagent
 creation requires explicit `--allow-concurrent`.
+
+`schedule update` is patch-only: it changes only supplied fields and preserves
+runtime evidence. `schedule pause` is reversible, `schedule stop` is a terminal
+agent stop that preserves the record, and `schedule remove` is a terminal
+cancellation. A stopped or cancelled schedule never fires again.
 
 The installed MCP wrapper is read-only. Register it once with
 `codex mcp add routecodex-hooks -- routecodex-hooks-mcp` and use its

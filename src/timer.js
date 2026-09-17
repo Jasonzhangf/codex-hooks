@@ -36,7 +36,7 @@ export class ManualClock {
   }
 }
 
-const TERMINAL_SCHEDULE_STATES = new Set(["cancelled", "disabled", "failed", "sent", "completed", "unknown_delivery"]);
+const TERMINAL_SCHEDULE_STATES = new Set(["cancelled", "stopped", "disabled", "failed", "sent", "completed", "unknown_delivery"]);
 const OCCURRENCE_TERMINAL_STATES = new Set(["sent", "completed", "unknown_delivery", "failed"]);
 
 export class TimerOperator {

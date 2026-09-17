@@ -122,6 +122,175 @@ test("schedule removal persists a cancelled terminal state", () => {
   assert.throws(() => control.mutate({ operation: "schedule.resume", id: "cancel-me" }), /schedule is terminal/);
 });
 
+test("schedule update patches supplied fields and preserves runtime evidence", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  const target = { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" };
+  control.mutate({
+    operation: "schedule.upsert",
+    id: "patch-me",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "before",
+    target,
+    mode: "interval",
+    interval_ms: 60_000,
+  });
+  const schedules = daemon.store.getControl("schedules");
+  schedules["patch-me"] = {
+    ...schedules["patch-me"],
+    state: "sent",
+    current_occurrence: "timer:patch-me:2026-09-16T12:00:00.000Z",
+    last_occurrence: "timer:patch-me:2026-09-16T12:00:00.000Z",
+    last_delivery: { intent_id: "timer:patch-me:2026-09-16T12:00:00.000Z" },
+  };
+  daemon.store.putControl("schedules", schedules);
+
+  const updated = control.mutate({ operation: "schedule.update", id: "patch-me", body: "after" });
+  assert.equal(updated.body, "after");
+  assert.equal(updated.target.thread_id, "thread");
+  assert.equal(updated.state, "sent");
+  assert.equal(updated.current_occurrence, "timer:patch-me:2026-09-16T12:00:00.000Z");
+  assert.deepEqual(updated.last_delivery, { intent_id: "timer:patch-me:2026-09-16T12:00:00.000Z" });
+});
+
+test("schedule update can change timing and target through a bound session alias", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  const firstTarget = { namespace: "codex_tui", appserver_id: "app", session_id: "session-1", thread_id: "thread-1" };
+  const secondTarget = { namespace: "codex_tui", appserver_id: "app", session_id: "session-2", thread_id: "thread-2" };
+  control.mutate({ operation: "session.bind", alias: "second", target: secondTarget });
+  control.mutate({
+    operation: "schedule.upsert",
+    id: "retarget",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "before",
+    target: firstTarget,
+  });
+  const updated = control.mutate({
+    operation: "schedule.update",
+    id: "retarget",
+    session: "second",
+    at: "2026-09-16T13:00:00.000Z",
+    interval_ms: 60_000,
+    mode: "interval",
+  });
+  assert.deepEqual(updated.target, secondTarget);
+  assert.equal(updated.at, "2026-09-16T13:00:00.000Z");
+  assert.equal(updated.state, "configured");
+});
+
+test("schedule stop is terminal and preserves the record without claiming delivery", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  control.mutate({
+    operation: "schedule.upsert",
+    id: "stop-me",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "wake",
+    target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" },
+  });
+  const stopped = control.mutate({ operation: "schedule.stop", id: "stop-me" });
+  assert.equal(stopped.state, "stopped");
+  assert.equal(stopped.enabled, false);
+  assert.equal(typeof stopped.stopped_at, "string");
+  assert.equal(control.query().schedules["stop-me"].state, "stopped");
+  assert.throws(() => control.mutate({ operation: "schedule.resume", id: "stop-me" }), /schedule is terminal/);
+  assert.throws(() => control.mutate({ operation: "schedule.update", id: "stop-me", body: "after" }), /schedule is terminal/);
+});
+
+test("schedule stop is rejected after delivery evidence exists", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  control.mutate({
+    operation: "schedule.upsert",
+    id: "already-sent",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "wake",
+    target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" },
+  });
+  const schedules = daemon.store.getControl("schedules");
+  schedules["already-sent"] = { ...schedules["already-sent"], state: "sent", enabled: false, completed_at: "2026-09-16T12:00:01.000Z" };
+  daemon.store.putControl("schedules", schedules);
+  assert.throws(() => control.mutate({ operation: "schedule.stop", id: "already-sent" }), /cannot be stopped from state: sent/);
+});
+
+test("schedule remove can cancel a stopped record through an explicit edge", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  control.mutate({
+    operation: "schedule.upsert",
+    id: "stop-then-remove",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "wake",
+    target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" },
+  });
+  control.mutate({ operation: "schedule.stop", id: "stop-then-remove" });
+  const result = control.mutate({ operation: "schedule.remove", id: "stop-then-remove" });
+  assert.equal(result.removed.state, "cancelled");
+  assert.equal(result.removed.enabled, false);
+});
+
+test("schedule update rejects incomplete mode and incompatible action target transitions", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  control.mutate({
+    operation: "schedule.upsert",
+    id: "bad-update",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "wake",
+    target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" },
+  });
+  assert.throws(
+    () => control.mutate({ operation: "schedule.update", id: "bad-update", mode: "interval" }),
+    /interval_ms/,
+  );
+
+  const daemon2 = new HooksDaemon({ codexapp: codexapp() });
+  const control2 = new FrameworkControlPlane({ store: daemon2.store });
+  control2.mutate({
+    operation: "schedule.upsert",
+    id: "bad-action-update",
+    action: "subagent",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "run",
+    target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" },
+  });
+  assert.throws(
+    () => control2.mutate({ operation: "schedule.update", id: "bad-action-update", action: "notify" }),
+    /target\.session_id/,
+  );
+  assert.throws(
+    () => control2.mutate({ operation: "schedule.update", id: "bad-action-update", action: "subagent", session: "missing" }),
+    /session target requires action notify/,
+  );
+
+  const daemon3 = new HooksDaemon({ codexapp: codexapp() });
+  const control3 = new FrameworkControlPlane({ store: daemon3.store });
+  control3.mutate({
+    operation: "schedule.upsert",
+    id: "subagent-to-notify",
+    action: "subagent",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "run",
+    target: { namespace: "codex_tui", appserver_id: "app", scope_id: "local:tui" },
+    cwd: "/tmp",
+    model: "test-model",
+    allow_concurrent: true,
+  });
+  control3.mutate({ operation: "session.bind", alias: "notify-alias", target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" } });
+  const converted = control3.mutate({
+    operation: "schedule.update",
+    id: "subagent-to-notify",
+    action: "notify",
+    session: "notify-alias",
+  });
+  assert.equal(converted.action, "notify");
+  assert.equal(converted.cwd, undefined);
+  assert.equal(converted.model, undefined);
+  assert.equal(converted.allow_concurrent, undefined);
+  assert.equal(converted.target.session_id, "session");
+});
+
 test("health endpoint is an explicit daemon readiness probe", async () => {
   const daemon = new HooksDaemon({ codexapp: codexapp() });
   const server = new DaemonHttpServer(daemon);

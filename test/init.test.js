@@ -296,6 +296,54 @@ test("rccs installs and creates a recurring notification schedule through the li
   }
 });
 
+test("rccs accepts namespace/appserver target syntax for subagent schedules", async () => {
+  const codexHome = await mkdtemp(join(tmpdir(), "rccs-subagent-cli-"));
+  const binDir = join(codexHome, "bin");
+  const port = await freePort();
+  let daemon = null;
+  let bridge = null;
+  try {
+    const init = await run(process.execPath, ["scripts/init.mjs", "--codex-home", codexHome, "--bin-dir", binDir, "--endpoint", `http://127.0.0.1:${port}`]);
+    assert.equal(init.code, 0, init.stderr);
+    const receipt = JSON.parse(init.stdout);
+    const target = {
+      namespace: "codex_tui",
+      appserver_id: "tui-appserver",
+      scope_id: "local:tui",
+      endpoint: "unix:///tmp/tui-appserver.sock",
+    };
+    assert.equal((await run(receipt.rccs_wrapper, ["config", "set", "target", JSON.stringify(target)])).code, 0);
+    bridge = await startBridgeFixture(loadDaemonConfig(receipt.daemon_config).codexapp.socket, { sendToIdle: true });
+    daemon = spawn(receipt.daemon_wrapper, ["--config", receipt.daemon_config], {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(JSON.parse(await readLine(daemon.stdout)).ready, true);
+
+    const at = new Date(Date.now() - 1000).toISOString();
+    const scheduled = await run(receipt.rccs_wrapper, [
+      "schedule",
+      "add",
+      "subagent-once",
+      at,
+      "run task",
+      "--action", "subagent",
+      "--target", "codex_tui/tui-appserver",
+    ]);
+    assert.equal(scheduled.code, 0, scheduled.stderr);
+    const body = JSON.parse(scheduled.stdout);
+    assert.equal(body.action, "subagent");
+    assert.deepEqual(body.target, { namespace: "codex_tui", appserver_id: "tui-appserver" });
+  } finally {
+    if (daemon) {
+      daemon.kill("SIGTERM");
+      await once(daemon, "exit");
+    }
+    if (bridge) await new Promise((resolve) => bridge.close(resolve));
+    await rm(codexHome, { recursive: true, force: true });
+  }
+});
+
 function run(command, args, { input = null, env = process.env } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd: process.cwd(), env, stdio: ["pipe", "pipe", "pipe"] });

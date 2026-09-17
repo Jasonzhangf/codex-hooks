@@ -131,7 +131,7 @@ async function scheduleCommand(args) {
       ...(options.allow_concurrent === true ? { allow_concurrent: true } : {}),
     };
     if (options.session) request.session = options.session;
-    else if (options.target) request.target = parseTarget(options.target);
+    else if (options.target) request.target = parseTargetIdentity(options.target);
     else throw new Error("--session or --target is required");
     await mutate(request);
     return;
@@ -237,6 +237,12 @@ function setSupervisorEnabled(record, enabled) {
 
 function parseTarget(value) {
   try { return JSON.parse(required(value, "target JSON")); } catch (error) { throw new Error(`target JSON is invalid: ${error.message}`); }
+}
+
+function parseTargetIdentity(value) {
+  const [namespace, appserverId, ...extra] = required(value, "target").split("/");
+  if (!namespace || !appserverId || extra.length > 0) throw new Error("--target must be <namespace/appserver>");
+  return { namespace, appserver_id: appserverId };
 }
 
 function parseTargetConfig(value) {

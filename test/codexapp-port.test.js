@@ -225,3 +225,63 @@ test("CodexApp bridge port creates a subagent through the typed bridge capabilit
     await rm(socketPath, { force: true });
   }
 });
+
+test("CodexApp bridge port resolves subagent scope from configured mapping and rejects mismatches", async () => {
+  const socketPath = join(tmpdir(), `codex-hooks-port-subagent-scope-${process.pid}.sock`);
+  const server = net.createServer((socket) => {
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      const index = buffer.indexOf("\n");
+      if (index < 0) return;
+      const request = JSON.parse(buffer.slice(0, index));
+      const result = {
+        protocol: "codex-comm/v1",
+        attemptId: request.params.attemptId,
+        scopeId: request.params.address.scopeId,
+        appserverId: request.params.address.appserverId,
+        namespace: request.params.address.namespace,
+        threadId: "thread-new",
+        turnId: "turn-new",
+      };
+      socket.end(`${JSON.stringify({ id: request.id, result })}\n`);
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  try {
+    const port = new CodexAppBridgePort({
+      socket: socketPath,
+      source: { scopeId: "hooks", sessionId: "hooksd" },
+      target_scopes: { "codex_tui/tui-appserver": "local:tui" },
+    });
+    const receipt = await port.create_subagent({
+      target: { namespace: "codex_tui", appserver_id: "tui-appserver" },
+      prompt: "run task",
+      attempt_id: "attempt-1",
+    });
+    assert.equal(receipt.thread_id, "thread-new");
+    await assert.rejects(
+      () => port.create_subagent({
+        target: { namespace: "codex_tui", appserver_id: "tui-appserver", scope_id: "other:tui" },
+        prompt: "run task",
+        attempt_id: "attempt-2",
+      }),
+      /target scope mismatch/,
+    );
+    await assert.rejects(
+      () => port.create_subagent({
+        target: { namespace: "codex_tui", appserver_id: "missing-appserver" },
+        prompt: "run task",
+        attempt_id: "attempt-3",
+      }),
+      /no explicit codexapp scope mapping/,
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(socketPath, { force: true });
+  }
+});

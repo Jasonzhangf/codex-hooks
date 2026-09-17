@@ -148,11 +148,7 @@ export class CodexAppBridgePort {
 
   async create_subagent({ target, prompt, attempt_id, cwd = null, model = null }) {
     const id = assertNonEmpty(attempt_id, "attempt_id");
-    const address = {
-      scopeId: assertNonEmpty(target.scope_id, "target.scope_id"),
-      appserverId: assertNonEmpty(target.appserver_id, "target.appserver_id"),
-      namespace: assertNonEmpty(target.namespace, "target.namespace"),
-    };
+    const address = this.targetScopeAddress(target);
     const result = await this.client.call(BRIDGE_METHODS.create_subagent, {
       address,
       prompt: assertNonEmpty(prompt, "prompt"),
@@ -224,15 +220,29 @@ export class CodexAppBridgePort {
   close() {}
 
   targetAddress(target) {
+    const address = this.resolveTargetScope(target);
+    return {
+      scopeId: address.scopeId,
+      sessionId: assertNonEmpty(target.thread_id, "target.thread_id"),
+    };
+  }
+
+  targetScopeAddress(target) {
+    const address = this.resolveTargetScope(target);
+    return {
+      scopeId: address.scopeId,
+      appserverId: assertNonEmpty(target.appserver_id, "target.appserver_id"),
+      namespace: assertNonEmpty(target.namespace, "target.namespace"),
+    };
+  }
+
+  resolveTargetScope(target) {
     if (!target || typeof target !== "object") throw new Error("codexapp target is required");
     const key = `${assertNonEmpty(target.namespace, "target.namespace")}/${assertNonEmpty(target.appserver_id, "target.appserver_id")}`;
     const scopeId = this.targetScopes[key];
     if (typeof scopeId !== "string" || scopeId.trim() === "") throw new Error(`no explicit codexapp scope mapping for ${key}`);
     if (target.scope_id != null && target.scope_id !== scopeId) throw new Error(`target scope mismatch for ${key}: expected ${scopeId}, received ${target.scope_id}`);
-    return {
-      scopeId,
-      sessionId: assertNonEmpty(target.thread_id, "target.thread_id"),
-    };
+    return { scopeId };
   }
 }
 

@@ -20,7 +20,7 @@ route reached native receipt/execution/reply/read evidence.
 | Tool observe/allow/deny/delay contract | `test/decision.test.js`, hook-kind tests | pass |
 | Daemon state/persistence/idempotency | `src/daemon.js`, `src/persistence.js`, tests 39–45/50–52 | pass |
 | Working suppress/send matrix | `contracts/state-machine.json`, tests 34–38 | pass |
-| Deterministic timer skeleton | `src/timer.js`, tests 70–76 | pass |
+| Session-bound timer delivery | `src/timer.js`, `src/daemon-entry.js`, `test/timer.test.js`, `test/daemon-entry.test.js`, `test/init.test.js` | pass |
 | Cordis plugin lifecycle | `src/orchestrator.js`, `test/orchestrator.test.js` | pass |
 | CodexApp typed port | `src/codexapp-port.js`, bridge contract tests | pass |
 | Internal `rccv3-codexapp` bin | `src/codexapp-entry.js`, `test/codexapp-entry.test.js`, `test/init.test.js` | pass |
@@ -31,6 +31,7 @@ route reached native receipt/execution/reply/read evidence.
 | RouteCodex managed startup | RouteCodex lifecycle owner and installed replay | pending-live |
 | Real TUI send/status/reply/read via same-entry hook-to-native | default TUI App Server trace, 2026-09-13 (`SAME_ENTRY_HOOK_TO_A_1789319103`, `SAME_ENTRY_HOOK_TO_B3_1789319549`; daemon state `read`, native cursor and `readItemId`) | pass-live |
 | Real Desktop send/status/reply/read via same-entry hook-to-native | default Desktop App Server trace, 2026-09-13 (`SAME_ENTRY_DESKTOP2_1789320180` on thread `01a09bc7-6a66-7271-8bbb-6446b727b503`; empty-baseline first send, daemon state `read`) | pass-live |
+| Session-bound timer to real TUI | default TUI App Server trace, 2026-09-16 (`RCC_TIMER_LIVE_0916` on thread `01a0acc8-e48a-71d1-bcd7-7427e67252a5`; CLI bind -> due -> native queue acceptance -> exact TUI reply) | pass-live |
 | Unmaterialized desktop thread first-send empty baseline | default Desktop App Server trace, 2026-09-13 (`SAME_ENTRY_DESKTOP2_1789320180`; adapter baseline `{ state: "empty" }` before first queue/add) | pass-live |
 | `idle_only` while target is working suppresses native send | default TUI App Server trace, 2026-09-13 (`WORKING_IDLE_ONLY_1789320995`: daemon `deferred`, codexapp `message_not_found`) | pass-live |
 | `working_allowed` while target is working sends once | default TUI App Server trace, 2026-09-13 (`WORKING_ALLOWED_LIVE_1789321365`: daemon `sent`, native status `working`, native `accepted`) | pass-live |

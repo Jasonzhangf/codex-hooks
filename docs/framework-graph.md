@@ -29,7 +29,7 @@ The graph is intentionally split into three evidence classes:
 
 - **Implemented baseline**: event normalization, hook-kind routing, status and
   input gating, idempotency, JSON persistence, outbox recovery, external Stop
-  output, deterministic timer skeleton, operator-slot query, and exact delivery
+  output, session-bound timer delivery, operator-slot query, and exact delivery
   evidence progression.
 - **Contract-only**: Stopless, update-goal policy decisions, long-horizon,
   memory, native Stop continuation, and recurring scheduling policy. Their

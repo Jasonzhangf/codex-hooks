@@ -1,9 +1,8 @@
 # RouteCodex Hooks Framework Design
 
-Status: design baseline, framework-only implementation. No Stopless, timer,
-memory, or goal policy is enabled by default. The timer contract includes a
-deterministic scheduler skeleton for state-machine verification; it does not
-provide a product scheduling policy.
+Status: framework implementation with session-bound timer delivery. No
+Stopless, memory, or goal policy is enabled by default. The timer is opt-in
+through CLI schedule mutation and runs on the daemon clock.
 
 ## Decision
 
@@ -135,7 +134,6 @@ not retried blindly.
 ## Non-goals of this baseline
 
 - no Stopless behavior;
-- no timer behavior;
 - no memory capture or injection;
 - no goal mutation;
 - no provider `reasoningStop` compatibility path;

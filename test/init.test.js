@@ -174,6 +174,67 @@ test("installed Stop command reaches a real hooksd process on a clean host", asy
   }
 });
 
+test("installed CLI binds a session and schedules a timer through the live daemon", async () => {
+  const codexHome = await mkdtemp(join(tmpdir(), "routecodex-hooks-timer-cli-"));
+  const binDir = join(codexHome, "bin");
+  const port = await freePort();
+  let daemon = null;
+  let bridge = null;
+  try {
+    const init = await run(process.execPath, ["scripts/init.mjs", "--codex-home", codexHome, "--bin-dir", binDir, "--endpoint", `http://127.0.0.1:${port}`]);
+    assert.equal(init.code, 0, init.stderr);
+    const receipt = JSON.parse(init.stdout);
+    const target = {
+      namespace: "codex_tui",
+      appserver_id: "tui-appserver",
+      scope_id: "local:tui",
+      endpoint: "unix:///tmp/tui-appserver.sock",
+    };
+    const configured = await run(receipt.cli_wrapper, ["config-set", "target", JSON.stringify(target)]);
+    assert.equal(configured.code, 0, configured.stderr);
+
+    bridge = await startBridgeFixture(loadDaemonConfig(receipt.daemon_config).codexapp.socket, { sendToIdle: true });
+    daemon = spawn(receipt.daemon_wrapper, ["--config", receipt.daemon_config], {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const ready = JSON.parse(await readLine(daemon.stdout));
+    assert.equal(ready.ready, true);
+
+    const threadId = "01a0acc8-e48a-71d1-bcd7-7427e67252a5";
+    const bound = await run(receipt.cli_wrapper, ["session-bind", "timer-tui", threadId]);
+    assert.equal(bound.code, 0, bound.stderr);
+    assert.equal(JSON.parse(bound.stdout).target.thread_id, threadId);
+
+    const at = new Date(Date.now() - 1000).toISOString();
+    const scheduled = await run(receipt.cli_wrapper, ["schedule-add", "cli-timer", at, "timer wake", "--session", "timer-tui"]);
+    assert.equal(scheduled.code, 0, scheduled.stderr);
+    assert.equal(JSON.parse(scheduled.stdout).session, "timer-tui");
+
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && bridge.sends.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(bridge.sends.length, 1);
+    assert.deepEqual(bridge.sends[0].to, { scopeId: "local:tui", sessionId: threadId });
+    assert.deepEqual(bridge.sends[0].body, "timer wake");
+    assert.equal(bridge.sends[0].attemptId.startsWith("timer:cli-timer:"), true);
+
+    const status = await run(receipt.cli_wrapper, ["status"]);
+    assert.equal(status.code, 0, status.stderr);
+    const state = JSON.parse(status.stdout).control.state;
+    assert.equal(state.session_bindings["timer-tui"].target.thread_id, threadId);
+    assert.equal(state.schedules["cli-timer"].state, "sent");
+  } finally {
+    if (daemon) {
+      daemon.kill("SIGTERM");
+      await once(daemon, "exit");
+    }
+    if (bridge) await new Promise((resolve) => bridge.close(resolve));
+    await rm(codexHome, { recursive: true, force: true });
+  }
+});
+
 function run(command, args, { input = null, env = process.env } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd: process.cwd(), env, stdio: ["pipe", "pipe", "pipe"] });
@@ -217,7 +278,8 @@ function freePort() {
   });
 }
 
-async function startBridgeFixture(socketPath) {
+async function startBridgeFixture(socketPath, { sendToIdle = false } = {}) {
+  const fixture = { sends: [] };
   const server = net.createServer((socket) => {
     let buffer = "";
     socket.setEncoding("utf8");
@@ -229,15 +291,48 @@ async function startBridgeFixture(socketPath) {
         buffer = buffer.slice(index + 1);
         if (!line.trim()) continue;
         const request = JSON.parse(line);
-        const result = request.method === "capabilities"
-          ? { protocol: "codex-comm/v1", query: ["session_status"], execution: ["send"], namespaces: ["codex_tui", "codex_app"] }
-          : request.method === "status"
-            ? { protocol: "codex-comm/v1", bridge: "up", service_identities: [{ scopeId: "local:hooks", sessionId: "hooksd", kind: "service", live: true }], scopes: [] }
-            : {};
+        let result;
+        if (request.method === "capabilities") {
+          result = { protocol: "codex-comm/v1", query: ["session_status"], execution: ["send"], namespaces: ["codex_tui", "codex_app"] };
+        } else if (request.method === "status") {
+          result = {
+            protocol: "codex-comm/v1",
+            bridge: "up",
+            service_identities: [{ scopeId: "local:hooks", sessionId: "hooksd", kind: "service", live: true }],
+            scopes: [{
+              scopeId: "local:tui",
+              appserverId: "tui-appserver",
+              namespace: "codex_tui",
+              sessions: [{ id: "thread-1" }],
+              agents: [],
+              capabilities: ["send_message_to_thread"],
+            }],
+          };
+        } else if (request.method === "session_status") {
+          result = {
+            address: request.params.address,
+            scopeId: "local:tui",
+            appserverId: "tui-appserver",
+            namespace: "codex_tui",
+            status: { state: sendToIdle ? "idle" : "unknown" },
+          };
+        } else if (request.method === "send") {
+          fixture.sends.push(request.params);
+          result = {
+            messageId: request.params.messageId,
+            attemptId: request.params.attemptId,
+            from: request.params.from,
+            to: request.params.to,
+            routing: { requestedTo: request.params.to, routedTo: request.params.to },
+            state: "accepted",
+          };
+        } else {
+          result = {};
+        }
         socket.write(`${JSON.stringify({ id: request.id, result })}\n`);
       }
     });
   });
   await new Promise((resolve, reject) => server.listen(socketPath, resolve).once("error", reject));
-  return server;
+  return Object.assign(server, fixture);
 }

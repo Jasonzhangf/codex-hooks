@@ -3,7 +3,7 @@ import { assertNonEmpty, clone, normalizeTarget, SEND_MODES } from "./protocol.j
 export const OPERATOR_REGISTRY = Object.freeze([
   { name: "stopless", hook_kinds: ["stop"], state_resource: "stopless_state", status: "contract-only" },
   { name: "update-goal", hook_kinds: ["update-goal"], state_resource: "update_goal_state", status: "contract-only" },
-  { name: "timer", hook_kinds: [], triggers: ["daemon_clock"], state_resource: "schedule_state", status: "skeleton" },
+  { name: "timer", hook_kinds: [], triggers: ["daemon_clock"], state_resource: "schedule_state", status: "implemented" },
   { name: "longhorizon", hook_kinds: [], triggers: ["daemon_checkpoint"], state_resource: "longhorizon_state", status: "contract-only" },
   { name: "memory", hook_kinds: ["input", "tool-call"], state_resource: "memory_state", status: "out-of-scope" },
 ]);
@@ -21,6 +21,7 @@ export class FrameworkControlPlane {
     return {
       operators: this.store.getControl("operators") || Object.fromEntries(OPERATORS.map((name) => [name, { enabled: false }])),
       operator_registry: clone(OPERATOR_REGISTRY),
+      session_bindings: this.store.getControl("session_bindings") || {},
       schedules: this.store.getControl("schedules") || {},
     };
   }
@@ -29,6 +30,9 @@ export class FrameworkControlPlane {
     if (!request || typeof request !== "object") throw new Error("control mutation is required");
     const operation = assertNonEmpty(request.operation, "operation");
     if (operation === "operator.set_enabled") return this.setOperator(request);
+    if (operation === "session.bind") return this.bindSession(request);
+    if (operation === "session.unbind") return this.unbindSession(request);
+    if (operation === "schedule.add") return this.addSchedule(request);
     if (operation === "schedule.upsert") return this.upsertSchedule(request);
     if (operation === "schedule.remove") return this.removeSchedule(request);
     if (operation === "schedule.pause") return this.pauseSchedule(request);
@@ -41,11 +45,45 @@ export class FrameworkControlPlane {
     const definition = OPERATOR_REGISTRY.find((entry) => entry.name === name);
     if (!definition) throw new Error(`unsupported operator: ${name}`);
     if (typeof request.enabled !== "boolean") throw new Error("enabled must be boolean");
-    if (request.enabled && definition.status !== "skeleton") throw new Error(`operator is not implemented: ${name}`);
+    if (request.enabled && !["skeleton", "implemented"].includes(definition.status)) throw new Error(`operator is not implemented: ${name}`);
     const operators = this.store.getControl("operators") || {};
     operators[name] = { enabled: request.enabled };
     this.store.putControl("operators", operators);
     return { operation: "operator.set_enabled", name, enabled: request.enabled };
+  }
+
+  bindSession(request) {
+    const alias = assertNonEmpty(request.alias, "alias");
+    const target = normalizeTarget(request.target);
+    const bindings = this.store.getControl("session_bindings") || {};
+    const existing = bindings[alias];
+    if (existing && JSON.stringify(existing.target) !== JSON.stringify(target) && request.replace !== true) {
+      throw new Error(`session alias is already bound: ${alias}; use replace to rebind it`);
+    }
+    bindings[alias] = { alias, target, bound_at: new Date().toISOString() };
+    this.store.putControl("session_bindings", bindings);
+    return clone(bindings[alias]);
+  }
+
+  unbindSession(request) {
+    const alias = assertNonEmpty(request.alias, "alias");
+    const bindings = this.store.getControl("session_bindings") || {};
+    const removed = bindings[alias] || null;
+    delete bindings[alias];
+    this.store.putControl("session_bindings", bindings);
+    return { alias, removed: clone(removed) };
+  }
+
+  addSchedule(request) {
+    const alias = assertNonEmpty(request.session, "session");
+    const bindings = this.store.getControl("session_bindings") || {};
+    const binding = bindings[alias];
+    if (!binding) throw new Error(`session alias is not bound: ${alias}`);
+    const schedule = this.upsertSchedule({ ...request, target: binding.target });
+    const operators = this.store.getControl("operators") || {};
+    operators.timer = { enabled: true };
+    this.store.putControl("operators", operators);
+    return { ...schedule, session: alias, timer_enabled: true };
   }
 
   upsertSchedule(request) {

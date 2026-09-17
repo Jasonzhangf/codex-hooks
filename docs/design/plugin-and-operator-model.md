@@ -56,14 +56,14 @@ with a fresh state store and cannot import another operator's state module.
 | Operator | Input | Current status | Future responsibility |
 | --- | --- | --- | --- |
 | Stopless | `Stop`/`SubagentStop` | contract slot only | loop guard policy, if explicitly enabled later |
-| Timer | daemon clock/CLI schedule | deterministic skeleton | due/claim/defer/send |
+| Timer | daemon clock/CLI schedule | implemented, opt-in | due/claim/defer/send |
 | UpdateGoal | `PreToolUse`/`PostToolUse` matcher `update_goal` | classification only | independent goal update policy |
 | LongHorizon | future checkpoint event | extension slot | durable wake condition |
 | Memory | input/stop/tool boundaries | extension slot only | context injection/extraction/writeback |
 
-The baseline has no product factory that enables Stopless, timer, update-goal,
-or Memory behavior. This is intentional: the framework is proven before any
-policy is added.
+The baseline has no product factory that enables Stopless, update-goal, or
+Memory behavior. Timer is enabled only by `schedule-add`, which resolves an
+explicit session binding and persists the schedule in hooksd.
 
 ## CLI/MCP separation
 

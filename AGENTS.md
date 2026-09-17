@@ -18,6 +18,6 @@ from logs or business message payloads. Unknown or disconnected running state
 fails closed. The default message mode is idle-only so automatic work does not
 interrupt a working Codex session.
 
-This repository intentionally does not implement Stopless, scheduling,
-update-goal mutation, or memory behavior. It provides their extension points
-and contract probes only.
+This repository intentionally does not implement Stopless, update-goal
+mutation, or memory behavior. Timer scheduling is opt-in through hooksd
+session bindings and schedules; no product policy enables it implicitly.

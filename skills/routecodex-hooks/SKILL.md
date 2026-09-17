@@ -21,6 +21,8 @@ routecodex-hooks config-set source_scope local:hooks
 routecodex-hooks config-set source_session hooksd
 routecodex-hooks config-set target_scope codex_tui/tui-appserver=local:tui
 routecodex-hooks config-set target '{"namespace":"codex_tui","appserver_id":"tui-appserver","scope_id":"local:tui","endpoint":"unix:///path/to/app-server-control.sock"}'
+routecodex-hooks session-bind timer-tui <session-id>
+routecodex-hooks schedule-add wake-1 2026-09-16T12:00:00Z 'wake body' --session timer-tui
 routecodex-hooks hook-disable stop
 routecodex-hooks hook-enable stop
 ```
@@ -44,8 +46,8 @@ An internal `codexapp.sendmessage` wake and official Stop `decision: "block"` ar
 
 This framework implements the official Stop hook path, daemon state/persistence
 boundaries, CodexApp bridge contract, CLI configuration/switch controls, MCP
-read-only status, and the deterministic timer state-machine skeleton. Stopless
-policy, update-goal mutation, memory behavior, and real TUI/Desktop delivery
-remain contract-only. RouteCodex-managed sidecar startup is implemented by the
-RouteCodex lifecycle integration; the hooks repository's tests do not replace
-RouteCodex live lifecycle evidence.
+read-only status, and session-bound timer delivery. Stopless policy,
+update-goal mutation, and memory behavior remain contract-only.
+RouteCodex-managed sidecar startup is implemented by the RouteCodex lifecycle
+integration; the hooks repository's tests do not replace RouteCodex live
+lifecycle evidence.

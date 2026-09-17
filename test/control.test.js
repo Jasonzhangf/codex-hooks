@@ -29,7 +29,7 @@ test("MCP reads control state and CLI-shaped mutation is visible through the sam
     assert.equal(mutation.status, 200);
     const state = await new McpStateClient(endpoint).queryState();
     assert.equal(state.state.operators.timer.enabled, true);
-    assert.equal(state.state.operator_registry.find((entry) => entry.name === "timer").status, "skeleton");
+    assert.equal(state.state.operator_registry.find((entry) => entry.name === "timer").status, "implemented");
   } finally {
     await server.close();
   }
@@ -75,6 +75,34 @@ test("schedule mutation validates its target and send mode at the control bounda
   assert.throws(
     () => control.mutate({ operation: "schedule.upsert", id: "bad-mode", at: "2026-09-10T12:00:00Z", body: "wake", target: { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" }, send_mode: "always" }),
     /unsupported send mode: always/,
+  );
+});
+
+test("session binding resolves a schedule without duplicating session identity", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  const target = {
+    namespace: "codex_tui",
+    appserver_id: "tui-appserver",
+    scope_id: "local:tui",
+    session_id: "01a0acc8-e48a-71d1-bcd7-7427e67252a5",
+    thread_id: "01a0acc8-e48a-71d1-bcd7-7427e67252a5",
+  };
+  control.mutate({ operation: "session.bind", alias: "timer-tui", target });
+  const scheduled = control.mutate({
+    operation: "schedule.add",
+    id: "session-timer",
+    at: "2026-09-16T12:00:00.000Z",
+    body: "wake",
+    session: "timer-tui",
+  });
+  assert.equal(scheduled.session, "timer-tui");
+  assert.deepEqual(scheduled.target, target);
+  assert.equal(control.query().operators.timer.enabled, true);
+  assert.equal(control.query().session_bindings["timer-tui"].target.thread_id, target.thread_id);
+  assert.throws(
+    () => control.mutate({ operation: "schedule.add", id: "missing", at: "2026-09-16T12:00:00.000Z", body: "wake", session: "missing" }),
+    /session alias is not bound: missing/,
   );
 });
 

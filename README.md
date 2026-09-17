@@ -1,8 +1,8 @@
 # RouteCodex Hooks Framework
 
 This repository is the runnable framework boundary for RouteCodex lifecycle
-hooks. It intentionally does not enable Stopless, scheduling, memory, or goal
-mutation behavior.
+hooks. It intentionally does not enable Stopless, memory, or goal mutation
+behavior.
 
 It is also a valid Codex plugin. The manifest is
 [`.codex-plugin/plugin.json`](.codex-plugin/plugin.json), and the official
@@ -101,9 +101,16 @@ The installed CLI owns configuration and switches:
 routecodex-hooks config-show
 routecodex-hooks config-set endpoint http://127.0.0.1:8787
 routecodex-hooks config-set target '{"namespace":"codex_tui","appserver_id":"tui-appserver","scope_id":"local:tui","endpoint":"unix:///path/to/app-server-control.sock"}'
+routecodex-hooks session-bind timer-tui <session-id>
+routecodex-hooks schedule-add wake-1 2026-09-16T12:00:00Z 'wake body' --session timer-tui
 routecodex-hooks hook-disable stop
 routecodex-hooks hook-enable stop
 ```
+
+`session-bind` persists the alias-to-target mapping in hooksd; `schedule-add`
+resolves that alias and enables the timer operator. The daemon ticks once per
+second and sends due schedules through the same status gate as every other
+intent. `idle_only` remains the default.
 
 The installed MCP wrapper is read-only. Register it once with
 `codex mcp add routecodex-hooks -- routecodex-hooks-mcp` and use its
@@ -144,8 +151,8 @@ proven native Desktop/TUI delivery.
 
 The tests prove the local command/stdin boundary, HTTP daemon boundary, status
 gate, send/defer/resume behavior, fail-closed states, idempotency, the full
-9-state × 2-mode gate matrix, deterministic timer skeleton, and
+9-state × 2-mode gate matrix, daemon-driven session-bound timer delivery, and
 Stopless/update-goal kind separation, explicit CodexApp bridge mapping,
 official event coverage, and the MCP/CLI control boundary. They do not claim
-real TUI/Desktop App-Server or RouteCodex managed-lifecycle proof. See
+RouteCodex managed-lifecycle proof. See
 [`docs/framework-graph.md`](docs/framework-graph.md).

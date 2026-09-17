@@ -400,11 +400,25 @@ export class HooksDaemon {
     const pending = this.store.listIntents
       ? this.store.listIntents()
       : [...this.store.intents.values()].map(clone);
-    const next = pending
+    const candidates = pending
       .filter((record) => DELIVERY_EVIDENCE_NEXT[record.state])
-      .sort((left, right) => String(left.evidence?.at || "").localeCompare(String(right.evidence?.at || "")))[0];
-    if (!next) return null;
-    return this.reconcileDeliveryEvidence(next.intent_id);
+      .sort((left, right) => String(left.evidence?.at || "").localeCompare(String(right.evidence?.at || "")));
+    if (candidates.length === 0) return null;
+    const unresolved = [];
+    for (const candidate of candidates) {
+      try {
+        return await this.reconcileDeliveryEvidence(candidate.intent_id);
+      } catch (error) {
+        if (!DELIVERY_RECONCILE_SKIP_CODES.has(error?.code)) throw error;
+        unresolved.push({
+          intent_id: candidate.intent_id,
+          state: candidate.state,
+          code: error.code,
+          message: error.message,
+        });
+      }
+    }
+    return { state: "unresolved", unresolved };
   }
 
   async send(event, hookKind, intent, state, attemptId = intent.intent_id) {
@@ -493,6 +507,11 @@ const SESSION_STATUS_ERROR_MAP = Object.freeze({
   native_transport_error: "session_status_unavailable",
   transport_timeout: "session_status_unavailable",
 });
+
+const DELIVERY_RECONCILE_SKIP_CODES = new Set([
+  "message_not_found",
+  "delivery_unresolved",
+]);
 
 function mapSessionStatusError(error) {
   const code = typeof error?.code === "string" ? error.code : "";

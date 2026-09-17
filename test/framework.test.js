@@ -524,6 +524,43 @@ test("unknown delivery can advance only through an explicit matching native rece
   assert.equal(daemon.store.getIntent("reconcile").state, "delivered");
 });
 
+test("delivery reconciliation does not let an unavailable old intent block a newer one", async () => {
+  const codexapp = fakeCodexapp("idle");
+  const daemon = new HooksDaemon({ codexapp });
+  const older = intent("reconcile-older");
+  const newer = intent("reconcile-newer");
+  daemon.store.putIntent(older.intent_id, {
+    ...older,
+    state: "accepted",
+    decision: "sent",
+    evidence: { attempt_id: older.intent_id, at: "2026-09-17T19:00:00.000Z" },
+    intent: older,
+  });
+  daemon.store.putIntent(newer.intent_id, {
+    ...newer,
+    state: "accepted",
+    decision: "sent",
+    evidence: { attempt_id: newer.intent_id, at: "2026-09-17T20:00:00.000Z" },
+    intent: newer,
+  });
+  codexapp.delivery_evidence = async ({ attempt_id }) => {
+    if (attempt_id === older.intent_id) {
+      throw Object.assign(new Error(`message not found: ${attempt_id}`), { code: "message_not_found" });
+    }
+    return {
+      source: "native-test",
+      attempt_id,
+      target_receipt: { clientId: attempt_id },
+    };
+  };
+
+  const result = await daemon.reconcileNextDelivery();
+  assert.equal(result.state, "delivered");
+  assert.equal(result.intent_id, newer.intent_id);
+  assert.equal(daemon.store.getIntent(older.intent_id).state, "accepted");
+  assert.equal(daemon.store.getIntent(newer.intent_id).state, "delivered");
+});
+
 test("a malformed native send receipt is rejected", async () => {
   const codexapp = fakeCodexapp("idle");
   codexapp.send_message = async () => ({ accepted: false });

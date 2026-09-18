@@ -9,7 +9,9 @@ negative probe. Configuration presence is not runtime evidence.
 - validate every JSON resource contract;
 - verify every event in `src/protocol.js` has one reachable manifest adapter;
 - verify every manifest matcher maps to exactly one hook kind;
-- verify resource owner and forbidden-edge map is machine-readable.
+- verify resource owner and forbidden-edge map is machine-readable;
+- verify the snapshot recovery DAG nodes, edges, resources, and evidence
+  bindings in `contracts/snapshot-recovery-dag.json`.
 
 ## Runtime lifecycle
 
@@ -78,6 +80,19 @@ send. Restart before flush and verify pending recovery without duplicate send.
 - reconcile either proves exactly one next native state or leaves it unresolved;
 - MCP reads all transitions without mutating them;
 - CLI mutation is visible through subsequent MCP query.
+
+## Snapshot recovery
+
+- `rccs-recover` starts and backs up without Node, `rccs`, or the daemon;
+- snapshot manifest and metadata reject tampered, unlisted, or incomplete
+  snapshots before live mutation;
+- restore accepts only controlled snapshot IDs, validates the snapshot config,
+  and uses the snapshot's own `rccv3` for final config check and restart;
+- rollback restores the exact pre-restore managed path set, including removing
+  paths that did not exist before restore;
+- rollback failure is explicit and never reported as successful restoration;
+- `rccs snapshot backup|list|restore` delegates to the installed recovery
+  wrapper, while the standalone entry remains available when the CLI is broken.
 
 ## V3 removal gate
 

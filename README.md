@@ -21,6 +21,8 @@ set is:
   official capability findings;
 - [acceptance-matrix.md](docs/design/acceptance-matrix.md): evidence-level
   acceptance matrix.
+- [rccs-snapshot-recovery-dag.md](docs/design/rccs-snapshot-recovery-dag.md):
+  snapshot recovery DAG and rollback boundaries.
 
 Resource contracts, state machines, ownership, and verification gates are
 under `contracts/` and `docs/verification-plan.md`.
@@ -154,6 +156,11 @@ the manifest and config, saves a rollback snapshot, and uses the snapshot's
 `rccv3` to run `config check`, `restart`, and `status`. A failed validation or
 restart reapplies the pre-restore managed paths, including removing paths that
 did not exist before the restore.
+
+The recovery DAG, resource ownership, and failure boundaries are recorded in
+[docs/design/rccs-snapshot-recovery-dag.md](docs/design/rccs-snapshot-recovery-dag.md)
+and validated against
+[contracts/snapshot-recovery-dag.json](contracts/snapshot-recovery-dag.json).
 
 `rccs session bind` persists the alias-to-target mapping in hooksd;
 `rccs schedule add` resolves that alias and enables the timer operator. The

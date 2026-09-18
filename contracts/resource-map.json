@@ -12,7 +12,14 @@
     { "id": "schedule_state", "owner": "policy.timer", "source": "persistent policy store", "mutable": true },
     { "id": "subagent_registry", "owner": "hooksd.subagent", "source": "native create and interrupt receipts", "mutable": true },
     { "id": "longhorizon_state", "owner": "policy.longhorizon", "source": "persistent policy store", "mutable": true },
-    { "id": "memory_state", "owner": "policy.memory", "source": "persistent policy store", "mutable": true }
+    { "id": "memory_state", "owner": "policy.memory", "source": "persistent policy store", "mutable": true },
+    { "id": "snapshot_root", "owner": "rccs-recover", "source": "rccs-recover snapshot storage", "mutable": true },
+    { "id": "rollback_root", "owner": "rccs-recover", "source": "rccs-recover rollback storage", "mutable": true },
+    { "id": "live_bin_dir", "owner": "rccs-recover", "source": "installed binary directory", "mutable": true },
+    { "id": "live_config", "owner": "rccs-recover", "source": "installed config.toml", "mutable": true },
+    { "id": "live_provider", "owner": "rccs-recover", "source": "installed provider configuration", "mutable": true },
+    { "id": "live_secrets", "owner": "rccs-recover", "source": "installed secret material", "mutable": true },
+    { "id": "live_aliases", "owner": "rccs-recover", "source": "installed compatibility aliases", "mutable": true }
   ],
   "edges": [
     { "from": "official_hook_event", "to": "message_intent", "owner": "policy", "operation": "derive" },
@@ -27,6 +34,9 @@
     { "owner": "mcp", "operation": "send or mutate" },
     { "owner": "hook-adapter", "operation": "own policy state" },
     { "owner": "codexapp", "operation": "own timer, goal, stopless, or subagent registry state" },
-    { "owner": "policy.stopless", "operation": "read or mutate update_goal_state" }
+    { "owner": "policy.stopless", "operation": "read or mutate update_goal_state" },
+    { "owner": "rccs-recover", "operation": "execute an unverified snapshot path" },
+    { "owner": "rccs-recover", "operation": "claim restoration after rollback failure" },
+    { "owner": "rccs-recover", "operation": "mutate the source snapshot during restore" }
   ]
 }

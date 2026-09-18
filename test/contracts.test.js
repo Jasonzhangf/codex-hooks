@@ -67,3 +67,63 @@ test("manifest reaches every protocol hook event", async () => {
     }
   }
 });
+
+test("snapshot recovery DAG binds every edge, resource, and evidence case", async () => {
+  const dag = await readJson("../contracts/snapshot-recovery-dag.json");
+  const map = await readJson("../contracts/resource-map.json");
+  const source = await readFile(new URL("../src/rccs-recover.sh", import.meta.url), "utf8");
+  const resourceOwners = new Map(map.resources.map((resource) => [resource.id, resource.owner]));
+  const nodeIds = new Set(dag.nodes.map((node) => node.id));
+  const edgeKeys = new Set(dag.edges.map((edge) => `${edge.from}->${edge.to}:${edge.event}`));
+  const eventNames = new Set(dag.edges.map((edge) => edge.event));
+  const evidenceEvents = new Set(dag.evidence.map((evidence) => evidence.event));
+  const resourceIds = new Set(dag.resources.map((resource) => resource.id));
+
+  assert.equal(dag.source, "src/rccs-recover.sh");
+  assert.deepEqual(dag.cli.standalone, ["backup", "list", "restore"]);
+  assert.equal(dag.cli.wrapper, "rccs snapshot");
+  assert.equal(nodeIds.size, dag.nodes.length);
+  assert.equal(edgeKeys.size, dag.edges.length);
+  for (const edge of dag.edges) {
+    assert.ok(nodeIds.has(edge.from), `unknown DAG source node: ${edge.from}`);
+    assert.ok(nodeIds.has(edge.to), `unknown DAG destination node: ${edge.to}`);
+    assert.ok(edge.event, `missing DAG edge event: ${edge.from}->${edge.to}`);
+  }
+  const incoming = new Map([...nodeIds].map((id) => [id, 0]));
+  const outgoing = new Map([...nodeIds].map((id) => [id, []]));
+  for (const edge of dag.edges) {
+    incoming.set(edge.to, incoming.get(edge.to) + 1);
+    outgoing.get(edge.from).push(edge.to);
+  }
+  const queue = [...nodeIds].filter((id) => incoming.get(id) === 0);
+  let visited = 0;
+  while (queue.length > 0) {
+    const id = queue.shift();
+    visited += 1;
+    for (const next of outgoing.get(id)) {
+      incoming.set(next, incoming.get(next) - 1);
+      if (incoming.get(next) === 0) queue.push(next);
+    }
+  }
+  assert.equal(visited, nodeIds.size, "snapshot recovery graph must be acyclic");
+  for (const resource of dag.resources) {
+    assert.equal(resourceOwners.get(resource.id), resource.owner, `resource owner mismatch: ${resource.id}`);
+  }
+  for (const binding of dag.implementation_bindings) {
+    assert.ok(nodeIds.has(binding.node), `implementation binding has unknown node: ${binding.node}`);
+    assert.match(source, new RegExp(`^${binding.symbol}\\(\\) \\{`, "m"), `missing source symbol: ${binding.symbol}`);
+    for (const resource of binding.resources) {
+      assert.ok(resourceIds.has(resource), `implementation binding has unknown resource: ${resource}`);
+    }
+  }
+  for (const evidence of dag.evidence) {
+    assert.ok(eventNames.has(evidence.event), `evidence is not bound to a DAG event: ${evidence.event}`);
+    assert.match(evidence.test, /^test\/.+\.test\.js$/);
+    assert.ok(evidence.case.length > 0);
+  }
+  for (const event of dag.required_evidence_events) {
+    assert.ok(evidenceEvents.has(event), `required evidence event is missing: ${event}`);
+  }
+  assert.ok(dag.invariants.some((invariant) => invariant.includes("rollback failure")));
+  assert.ok(map.forbidden.some((edge) => edge.owner === "rccs-recover" && edge.operation.includes("unverified")));
+});

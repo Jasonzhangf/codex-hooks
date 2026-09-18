@@ -21,9 +21,11 @@ target to continue executing the goal.
 
 The App Server `turn/steer` operation is only valid for a live active turn.
 LongHorizon liveness is not a same-turn correction: native `active` and
-`running` targets normalize to `working` and are skipped, while native `idle`
-and `interrupted`/`cancelled` targets normalize to send-eligible states and
-receive a `thread/queue/add` wake. The liveness path never steers.
+`running` targets normalize to `working` and are skipped, while native `idle`,
+`interrupted`/`cancelled`, and `notLoaded` targets normalize to send-eligible
+states and receive a `thread/queue/add` wake. `notLoaded` is resumed before the
+queue add. When a queued submission remains pending after the add, CodexApp
+starts it explicitly with `thread/queue/start`. The liveness path never steers.
 
 The same DAG also defines what happens after a wake is emitted. Native
 acceptance is only one receipt state; delivery, execution, reply, and read are
@@ -44,16 +46,23 @@ flowchart TD
   E --> E2["idle"]
   E --> E3["interrupted / cancelled"]
   E --> E4["starting / stopping"]
-  E --> E5["systemError / disconnected / failed / unknown / notLoaded"]
+  E --> E5["systemError / disconnected / failed / unknown"]
+  E --> E6["notLoaded"]
   E1 --> F["normalize working: skip this occurrence; recheck next interval"]
   E2 --> G["normalize idle: emit queue MessageIntent"]
   E3 --> G2["normalize interrupted: emit queue MessageIntent"]
+  E6 --> G3["normalize idle: resume thread, then emit queue MessageIntent"]
   G --> H["body names goal file and continue instruction"]
   G2 --> H
+  G3 --> H
   E4 --> H1["persist deferred occurrence"]
   E5 --> I["fail closed this occurrence; recheck next interval"]
   E -->|missing| I2["fail closed and terminate schedule"]
-  H --> J["CodexApp send / thread queue"]
+  H --> J["CodexApp send / thread queue/add"]
+  J --> J2["read status and thread/queue/list"]
+  J2 -->|submission still pending| J3["thread/queue/start"]
+  J2 -->|submission auto-started| K
+  J3 --> K
   J -->|accepted| K["accepted receipt"]
   K -->|matching target receipt| L["delivered"]
   L -->|execution evidence| M["executed"]
@@ -75,15 +84,18 @@ flowchart TD
 | Due → native status observation | `policy.timer` → `codexapp` | target identity | native thread state | status error maps to explicit failure |
 | Active/running → working | `codexapp` | native `active` or `running` | normalized `working` | native state is not treated as a direct policy state |
 | Idle/interrupted/cancelled → eligible | `codexapp` | native `idle`, `interrupted`, or `cancelled` | normalized send-eligible state | native state is not treated as a direct policy state |
+| Not loaded → resume + idle | `codexapp` | native `notLoaded` | `thread/resume`, then normalized `idle` | no queue add before resume |
 | Starting/stopping → deferred | `codexapp` | native `starting` or `stopping` | normalized deferred state | no blind send |
 | System error → failed | `codexapp` | native `systemError` | normalized `failed` | no blind send |
-| Unknown/disconnected/notLoaded → fail closed | `codexapp` | native `unknown`, `disconnected`, `failed`, or `notLoaded` | normalized fail-closed state | no blind send |
+| Unknown/disconnected/failed → fail closed | `codexapp` | native `unknown`, `disconnected`, or `failed` | normalized fail-closed state | no blind send |
 | Working → skip | `hooksd` | `working` observation + `skip` | current occurrence `skipped`; next interval remains scheduled | native send or steer would be a contract failure |
 | Idle/interrupted → queue | `hooksd` | legal send state | `MessageIntent.operation=queue` with goal continuation body | no steer operation is allowed |
 | Starting/stopping → deferred | `hooksd` | normalized transition state | persisted pending occurrence | no blind send |
 | Unknown/disconnected/failed → fail closed | `hooksd` | non-authoritative state | current occurrence failure; next interval remains scheduled | error retained on the schedule |
 | Missing/dead → fail closed | `hooksd` | missing target | terminal `session_missing`, no send | error retained on the schedule |
-| Queue → accepted | `codexapp` | target, body, attempt id | native accepted receipt | transport error remains explicit |
+| Queue → accepted | `codexapp` | target, body, attempt id | native `thread/queue/add` receipt | transport error remains explicit |
+| Accepted → queue observed | `codexapp` | queued submission identity | native status plus `thread/queue/list` | queue identity is preserved |
+| Pending → started | `codexapp` | queued submission still present | native `thread/queue/start` receipt | active/pending race is treated as already started; other errors remain explicit |
 | Accepted → delivered | `hooksd.transport` | matching target receipt | delivered evidence | acceptance alone is insufficient |
 | Delivered → executed → replied → read | `hooksd.transport` | matching item, turn, cursor | ordered evidence states | missing evidence leaves state unresolved |
 | Queue → unknown delivery | `hooksd.transport` | timeout or uncertain transport | `unknown_delivery` | no blind retry |
@@ -101,16 +113,20 @@ flowchart TD
    states; idle and interrupted receive a queue wake. Liveness never steers.
 5. App Server `starting` and `stopping` normalize to deferred states.
 6. App Server `systemError` normalizes to `failed`; `disconnected`, `failed`,
-   `unknown`, and `notLoaded` fail closed without a queue wake.
-7. The queue wake body names the goal file and instructs the target to continue
+   and `unknown` fail closed without a queue wake.
+7. App Server `notLoaded` normalizes to `idle`, resumes the thread, then queues
+   the wake.
+8. A queued submission that remains pending after `thread/queue/add` is
+   explicitly started with `thread/queue/start`.
+9. The queue wake body names the goal file and instructs the target to continue
    executing the goal.
-8. Starting and stopping are deferred until a legal observation.
-9. Unknown, disconnected, and failed targets fail closed for the current
+10. Starting and stopping are deferred until a legal observation.
+11. Unknown, disconnected, and failed targets fail closed for the current
    occurrence and are checked again; missing and dead targets terminate the
    schedule.
-10. Accepted, queued, delivered, executed, replied, and read are distinct
+12. Accepted, queued, delivered, executed, replied, and read are distinct
    evidence states.
-11. An uncertain delivery is reconciled by the same attempt identity and is
+13. An uncertain delivery is reconciled by the same attempt identity and is
    never blindly retried.
 
 ## Evidence mapping
@@ -123,6 +139,7 @@ flowchart TD
 | Working/active/running skip | `test/longhorizon-liveness.test.js`: skips a working target without queueing and keeps probing until idle |
 | Idle/interrupted queue wake | `test/longhorizon-liveness.test.js`: wakes an idle and interrupted target through queue; applies the active idle interrupted state matrix through queue wake |
 | Native status normalization | `test/codexapp-entry.test.js`: maps every native thread status through the control socket |
+| Not loaded resume and interrupted queue start | `test/codexapp-entry.test.js`: applies every native status through the native bridge |
 | Starting/stopping defer | `test/longhorizon-liveness.test.js`: defers while starting or stopping |
 | Fail closed | `test/longhorizon-liveness.test.js`: fails closed for unknown disconnected failed |
 | Missing session | `test/longhorizon-liveness.test.js`: records a missing session as terminal |

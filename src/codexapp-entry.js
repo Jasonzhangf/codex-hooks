@@ -299,6 +299,10 @@ function isUnmaterializedBaselineError(error) {
     && (error.message.includes("not materialized") || error.message.includes("before first user message"));
 }
 
+function isQueueAlreadyClaimedError(error) {
+  return /already has an active or pending turn/i.test(error?.message || "");
+}
+
 function publicScope(target) {
   return {
     scopeId: target.scope_id,
@@ -431,7 +435,7 @@ function adapter(target) {
 
 function normalizeThreadStatus(status) {
   const state = status?.type || status?.state || "unknown";
-  const normalized = state === "notLoaded" ? "unknown" : state;
+  const normalized = state === "notLoaded" ? "idle" : state;
   return {
     state: ["idle", "active", "running", "working", "interrupted", "cancelled", "starting", "stopping", "systemError", "disconnected", "failed", "unknown"].includes(normalized)
       ? (["active", "running"].includes(normalized)
@@ -586,11 +590,36 @@ class NativeAppServer {
 
   async send(target, threadId, body, clientUserMessageId) {
     await this.connect();
-    return this.rpc.call("thread/queue/add", {
+    const thread = await this.threadStatus(threadId);
+    const state = thread?.status?.type || thread?.status?.state || "unknown";
+    if (state === "notLoaded") {
+      await this.rpc.call("thread/resume", { threadId });
+    }
+    const queued = await this.rpc.call("thread/queue/add", {
       threadId,
       input: [{ type: "text", text: body }],
       clientUserMessageId,
     });
+    const queuedSubmissionId = queued?.queuedSubmission?.id;
+    if (typeof queuedSubmissionId !== "string" || queuedSubmissionId.trim() === "") {
+      throw codedError("thread/queue/add returned no queued submission identity", "native_transport_error");
+    }
+    const current = await this.threadStatus(threadId);
+    const currentState = current?.status?.type || current?.status?.state || "unknown";
+    if (!["active", "running"].includes(currentState)) {
+      const page = await this.rpc.call("thread/queue/list", { threadId, limit: 100 });
+      if (!Array.isArray(page?.data)) {
+        throw codedError("thread/queue/list returned an invalid queue", "native_transport_error");
+      }
+      if (page.data.some((entry) => entry?.id === queuedSubmissionId)) {
+        try {
+          await this.rpc.call("thread/queue/start", { threadId, queuedSubmissionId });
+        } catch (error) {
+          if (!isQueueAlreadyClaimedError(error)) throw error;
+        }
+      }
+    }
+    return queued;
   }
 
   async steer(target, threadId, body, clientUserMessageId, expectedTurnId) {

@@ -59,7 +59,7 @@ test("internal codexapp initializes the native App Server before target reads an
       ["thread/items/list", { threadId: "thread-1", limit: 100, sortDirection: "desc" }],
     ]);
     assert.equal(calls.some(([method]) => method === "initialized"), false);
-    assert.deepEqual(calls.at(-1), ["thread/queue/add", {
+    assert.deepEqual(calls.find(([method]) => method === "thread/queue/add"), ["thread/queue/add", {
       threadId: "thread-1",
       input: [{ type: "text", text: "probe" }],
       clientUserMessageId: "message-1",
@@ -655,7 +655,7 @@ test("internal codexapp maps every native thread status through the control sock
     ["disconnected", "disconnected"],
     ["failed", "failed"],
     ["unknown", "unknown"],
-    ["notLoaded", "unknown"],
+    ["notLoaded", "idle"],
   ]) {
     const root = await mkdtemp(join(tmpdir(), `routecodex-codexapp-status-${nativeState}-`));
     const appserverSocket = join(root, "appserver.sock");
@@ -712,7 +712,7 @@ test("longhorizon liveness DAG applies every native status through the native br
     ["disconnected", "fail_closed", "enabled"],
     ["failed", "fail_closed", "enabled"],
     ["unknown", "fail_closed", "enabled"],
-    ["notLoaded", "fail_closed", "enabled"],
+    ["notLoaded", "sent", "enabled"],
   ]) {
     const root = await mkdtemp(join(tmpdir(), `routecodex-longhorizon-dag-${nativeState}-`));
     const appserverSocket = join(root, "appserver.sock");
@@ -783,6 +783,21 @@ test("longhorizon liveness DAG applies every native status through the native br
         assert.equal(queued[1].threadId, "thread-1");
         assert.equal(queued[1].input[0].text.includes("/tmp/goal.md"), true);
         assert.equal(queued[1].input[0].text.includes("continue executing the goal"), true);
+        if (nativeState === "notLoaded") {
+          assert.ok(
+            calls.some(([method, params]) => method === "thread/resume" && params.threadId === "thread-1"),
+            "notLoaded target must resume before the queued wake can execute",
+          );
+          assert.equal(calls.some(([method]) => method === "thread/queue/start"), false);
+        } else if (["interrupted", "cancelled"].includes(nativeState)) {
+          const started = calls.find(([method]) => method === "thread/queue/start");
+          assert.ok(started, "interrupted target must explicitly start the queued wake");
+          assert.equal(started[1].threadId, "thread-1");
+          assert.equal(started[1].queuedSubmissionId, "queued-1");
+        } else {
+          assert.equal(calls.some(([method]) => method === "thread/resume"), false);
+          assert.equal(calls.some(([method]) => method === "thread/queue/start"), false);
+        }
       } else {
         assert.equal(calls.some(([method]) => method === "thread/queue/add"), false);
       }
@@ -852,7 +867,37 @@ async function startNativeFixture(socketPath, calls, options = {}) {
         else if (request.method === "thread/turns/list") response = options.turnsError
           ? { error: options.turnsError }
           : { result: { data: options.turns || [], nextCursor: null } };
-        else if (request.method === "thread/queue/add") response = { result: options.queueResult || { accepted: true } };
+        else if (request.method === "thread/queue/add") response = {
+          result: options.queueResult || {
+            queuedSubmission: {
+              id: "queued-1",
+              clientUserMessageId: request.params.clientUserMessageId,
+            },
+          },
+        };
+        else if (request.method === "thread/resume") response = {
+          result: options.threadResumeResult || {
+            thread: { id: request.params.threadId, status: { type: "idle" } },
+          },
+        };
+        else if (request.method === "thread/queue/list") response = {
+          result: options.queueListResult || (
+            ["interrupted", "cancelled"].includes(options.threadStatus?.type)
+              ? {
+                data: [{
+                  id: "queued-1",
+                  clientUserMessageId: "message-1",
+                }],
+                nextCursor: null,
+              }
+              : { data: [], nextCursor: null }
+          ),
+        };
+        else if (request.method === "thread/queue/start") response = {
+          result: options.queueStartResult || {
+            turn: { id: "turn-queued", status: "inProgress" },
+          },
+        };
         else if (request.method === "thread/start") response = { result: options.threadStartResult || { thread: { id: "thread-new", status: { type: "idle" } } } };
         else if (request.method === "turn/start") {
           response = { result: options.turnStartResult || { turn: { id: "turn-new", status: "inProgress" } } };

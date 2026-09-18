@@ -63,7 +63,8 @@ test("rccs help documents defaults and state semantics", async () => {
   assert.equal(longhorizon.code, 0, longhorizon.stderr);
   assert.match(longhorizon.stdout, /--mode periodic\|goal/);
   assert.match(longhorizon.stdout, /--review-budget/);
-  assert.match(longhorizon.stdout, /registered paused/);
+  assert.match(longhorizon.stdout, /active on registration/);
+  assert.match(longhorizon.stdout, /liveness check after 60 seconds/);
 
   const snapshot = await runCli(["snapshot", "--help"]);
   assert.equal(snapshot.code, 0, snapshot.stderr);

@@ -5,6 +5,7 @@ import {
   normalizeTarget,
   normalizeTargetScope,
   BUSY_POLICIES,
+  MESSAGE_SOURCES,
   SCHEDULE_ACTIONS,
   SCHEDULE_MODES,
   SEND_MODES,
@@ -18,14 +19,16 @@ export const OPERATOR_REGISTRY = Object.freeze([
   { name: "memory", hook_kinds: ["input", "tool-call"], state_resource: "memory_state", status: "out-of-scope" },
 ]);
 const OPERATORS = Object.freeze(OPERATOR_REGISTRY.map((entry) => entry.name));
+const LONGHORIZON_LIVENESS_DELAY_MS = 60_000;
 
 export class FrameworkControlPlane {
-  constructor({ store, subagents = null }) {
+  constructor({ store, subagents = null, now = () => new Date().toISOString() }) {
     if (!store || typeof store.getControl !== "function" || typeof store.putControl !== "function") {
       throw new Error("control plane requires a state store");
     }
     this.store = store;
     this.subagents = subagents;
+    this.now = now;
   }
 
   query() {
@@ -145,6 +148,8 @@ export class FrameworkControlPlane {
     if (!Object.values(SEND_MODES).includes(sendMode)) throw new Error(`unsupported send mode: ${sendMode}`);
     const busyPolicy = request.busy_policy || BUSY_POLICIES.DEFER;
     if (!Object.values(BUSY_POLICIES).includes(busyPolicy)) throw new Error(`unsupported busy policy: ${busyPolicy}`);
+    const source = request.source == null ? null : assertNonEmpty(request.source, "source");
+    if (source != null && !MESSAGE_SOURCES.includes(source)) throw new Error(`unsupported message source: ${source}`);
     if (Number.isNaN(Date.parse(at))) throw new Error("schedule time must be an ISO timestamp");
     if (action === SCHEDULE_ACTIONS.WAIT && mode !== SCHEDULE_MODES.ONCE) {
       throw new Error("wait schedules must be one-shot");
@@ -175,6 +180,7 @@ export class FrameworkControlPlane {
       body,
       send_mode: sendMode,
       busy_policy: busyPolicy,
+      ...(source == null ? {} : { source }),
       ...(ownerSessionId == null ? {} : { owner_session_id: assertNonEmpty(ownerSessionId, "owner_session_id") }),
       ...(action === SCHEDULE_ACTIONS.SUBAGENT ? {
         ...(request.cwd == null ? {} : { cwd: assertNonEmpty(request.cwd, "cwd") }),
@@ -421,9 +427,10 @@ export class FrameworkControlPlane {
     const record = {
       id,
       mode,
-      enabled: false,
-      state: "registered",
-      registered_at: new Date().toISOString(),
+      enabled: true,
+      state: "active",
+      registered_at: this.now(),
+      activated_at: this.now(),
       ...(request.goal_file == null ? {} : { goal_file: assertNonEmpty(request.goal_file, "goal_file") }),
       ...(request.prompt == null ? {} : { prompt: assertNonEmpty(request.prompt, "prompt") }),
       ...(request.session == null ? {} : { session: assertNonEmpty(request.session, "session") }),
@@ -450,16 +457,32 @@ export class FrameworkControlPlane {
         send_mode: SEND_MODES.IDLE_ONLY,
         busy_policy: BUSY_POLICIES.SKIP,
         owner_session_id: record.owner_session_id || target.thread_id,
+        source: "longhorizon",
       });
-      this.pauseSchedule({ id: schedule.id });
       record.schedule_id = schedule.id;
-      record.schedule_state = "disabled";
+      record.schedule_state = "enabled";
     } else {
       if (!record.goal_file || !record.session) throw new Error("goal longhorizon requires goal_file and session");
       const target = this.resolveSessionTarget(record.session);
       record.target = target;
       record.owner_session_id = record.owner_session_id || target.thread_id;
       record.review_count ??= 0;
+      const schedule = this.upsertSchedule({
+        operation: "schedule.upsert",
+        id: `longhorizon-liveness:${id}`,
+        action: SCHEDULE_ACTIONS.NOTIFY,
+        mode: SCHEDULE_MODES.ONCE,
+        at: new Date(Date.parse(record.activated_at) + LONGHORIZON_LIVENESS_DELAY_MS).toISOString(),
+        body: `LongHorizon goal liveness check. Read ${record.goal_file}, continue the goal if the target is idle or interrupted, and do not duplicate work if it is already working.`,
+        target,
+        send_mode: SEND_MODES.IDLE_ONLY,
+        busy_policy: BUSY_POLICIES.SKIP,
+        owner_session_id: record.owner_session_id || target.thread_id,
+        source: "longhorizon",
+      });
+      record.liveness_schedule_id = schedule.id;
+      record.liveness_check_due_at = schedule.at;
+      record.liveness_state = "scheduled";
     }
     records[id] = record;
     this.store.putControl("longhorizon", records);
@@ -482,11 +505,12 @@ export class FrameworkControlPlane {
         throw new Error(`longhorizon schedule is terminal: ${record.schedule_id}; register it again before activation`);
       }
     }
+    const activatedAt = this.now();
     records[id] = {
       ...record,
       enabled,
       state: enabled ? "active" : "paused",
-      ...(enabled ? { activated_at: new Date().toISOString() } : { paused_at: new Date().toISOString() }),
+      ...(enabled ? { activated_at: activatedAt } : { paused_at: activatedAt }),
     };
     this.store.putControl("longhorizon", records);
     if (record.mode === "periodic" && record.schedule_id) {
@@ -499,6 +523,29 @@ export class FrameworkControlPlane {
         schedule_state: enabled ? "enabled" : "disabled",
       };
       this.store.putControl("longhorizon", records);
+    }
+    if (record.mode === "goal" && record.liveness_schedule_id) {
+      const schedules = this.store.getControl("schedules") || {};
+      const schedule = schedules[record.liveness_schedule_id];
+      if (schedule && !isTerminalSchedule(schedule)) {
+        this.mutate({
+          operation: enabled ? "schedule.resume" : "schedule.pause",
+          id: record.liveness_schedule_id,
+        });
+        if (enabled) {
+          this.mutate({
+            operation: "schedule.update",
+            id: record.liveness_schedule_id,
+            at: new Date(Date.parse(activatedAt) + LONGHORIZON_LIVENESS_DELAY_MS).toISOString(),
+          });
+        }
+        records[id] = {
+          ...records[id],
+          liveness_check_due_at: new Date(Date.parse(activatedAt) + LONGHORIZON_LIVENESS_DELAY_MS).toISOString(),
+          liveness_state: enabled ? "scheduled" : "paused",
+        };
+        this.store.putControl("longhorizon", records);
+      }
     }
     this.syncOperatorState(records);
     return clone(records[id]);
@@ -522,6 +569,18 @@ export class FrameworkControlPlane {
       if (schedule && !isTerminalSchedule(schedule)) {
         this.mutate({ operation: "schedule.stop", id: record.schedule_id });
       }
+    }
+    if (record.mode === "goal" && record.liveness_schedule_id) {
+      const schedules = this.store.getControl("schedules") || {};
+      const schedule = schedules[record.liveness_schedule_id];
+      if (schedule && STOPPABLE_SCHEDULE_STATES.has(schedule.state)) {
+        this.mutate({ operation: "schedule.stop", id: record.liveness_schedule_id });
+      }
+      records[id] = {
+        ...records[id],
+        liveness_state: "stopped",
+      };
+      this.store.putControl("longhorizon", records);
     }
     this.syncOperatorState(records);
     return clone(records[id]);

@@ -3,8 +3,8 @@
 Status: Stage 2 implemented contract with explicit opt-in product behavior.
 This document defines the layer and ownership boundary. Scheduling and
 LongHorizon are implemented; Stopless goal review is implemented but remains
-disabled until an explicit LongHorizon goal record is activated. Update-goal
-mutation and Memory remain boundary-only.
+inactive until an explicit LongHorizon goal record is registered, which
+activates it by default. Update-goal mutation and Memory remain boundary-only.
 
 ## 1. Layer contract
 
@@ -89,6 +89,7 @@ Every `MessageIntent` has exactly one mode:
 - `working_allowed`: a working session may receive the message only when the
   operator configuration explicitly permits it.
 
+`interrupted` is send-eligible because no live turn exists to disturb.
 `starting`, `stopping`, `unknown`, `disconnected`, and `failed` do not permit a
 guess. They defer or fail explicitly according to the typed contract. Manual
 input is the target suppress gate for `working_allowed`; the current bridge
@@ -98,7 +99,7 @@ reports `input_active=false`, so that suppression is not yet live-verified.
 
 The registry provides independent slots for `stopless`, `timer`, `update-goal`,
 `longhorizon`, and `memory`. Timer and LongHorizon product behavior are
-implemented and opt-in. Stopless goal review is activated only through a
+implemented and opt-in. Stopless goal review is activated by registering a
 LongHorizon `goal` record. Update-goal mutation and Memory remain boundary-only.
 Timer wakeups originate inside the daemon clock and enter the same typed
 `MessageIntent` path; they are not synthetic official Hook events.

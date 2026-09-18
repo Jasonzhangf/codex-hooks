@@ -26,6 +26,7 @@ export const HOOK_KINDS = Object.freeze([
 export const SESSION_STATES = Object.freeze([
   "idle",
   "working",
+  "interrupted",
   "waiting_for_input",
   "stopping",
   "stopped",
@@ -37,6 +38,7 @@ export const SESSION_STATES = Object.freeze([
 
 export const SEND_ELIGIBLE_STATES = Object.freeze([
   "idle",
+  "interrupted",
   "waiting_for_input",
   "stopped",
 ]);

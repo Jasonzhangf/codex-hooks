@@ -170,13 +170,13 @@ not part of the implemented surface.
 ## 5. LongHorizon modes
 
 LongHorizon is a registered operator with two closed-loop modes. It is opt-in
-through `rccs` and can be stopped by an agent.
+through `rccs`, active on registration, and can be paused or stopped by an
+agent.
 
 Current CLI surface:
 
 ```bash
 rccs longhorizon register <id> --mode periodic|goal ...
-rccs longhorizon activate <id>
 rccs longhorizon list|show|pause|stop|remove <id>
 ```
 
@@ -202,8 +202,12 @@ LongHorizon `update` or `resume` commands.
 
 ### Goal review mode
 
-On Stop, the goal reviewer checks current turn status and goal state. It spawns
-an isolated subagent with a fixed reviewer prompt that re-anchors:
+Registration schedules a one-shot liveness check after 60 seconds. If the
+target is idle or interrupted, the daemon queues a wake that tells the agent to
+read the goal and continue. If the target is already working, the occurrence is
+skipped without creating a backlog. On later Stop events, the goal reviewer
+checks current turn status and goal state. It spawns an isolated subagent with
+a fixed reviewer prompt that re-anchors:
 
 - what the goal is;
 - what was actually done;
@@ -221,7 +225,8 @@ reviewer simply does not run and the Stop path remains explicit.
 1. Schedule: CRUD, stop, pause/resume, coalescing, status gating.
 2. Stop interception: Stop event -> stopless feedback intent.
 3. Tool-call interception: observe/allow/deny/delay.
-4. LongHorizon: registration, activation, periodic inspection, goal review.
+4. LongHorizon: registration, first liveness check, periodic inspection, goal
+   review.
 5. Request augmentation: schema, system prompt, and model/effort selection.
 6. Subagent model/effort overrides; Codex profile selection remains blocked by
    the native App Server boundary.

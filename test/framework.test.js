@@ -342,6 +342,7 @@ test("daemon gate executes every session state and send mode in the graph", asyn
   const expected = {
     idle: "sent",
     working: { [SEND_MODES.IDLE_ONLY]: "deferred", [SEND_MODES.WORKING_ALLOWED]: "sent" },
+    interrupted: "sent",
     waiting_for_input: "sent",
     stopping: "deferred",
     stopped: "sent",

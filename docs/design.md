@@ -1,8 +1,10 @@
 # RouteCodex Hooks Framework Design
 
 Status: framework implementation with session-bound timer delivery. Stopless
-goal review and LongHorizon are opt-in and disabled by default. The timer is
-opt-in through CLI schedule mutation and runs on the daemon clock. Request
+goal review and LongHorizon are opt-in through explicit registration. A
+LongHorizon goal is active on registration, schedules its first liveness check
+after 60 seconds, and then continues through Stop review. The timer is opt-in
+through CLI schedule mutation and runs on the daemon clock. Request
 augmentation and memory remain design/boundary items, not implemented
 capabilities.
 
@@ -118,7 +120,7 @@ never pass synthetic lifecycle JSON through the Hook adapter.
 Current planned policies:
 
 - Stopless: implemented as LongHorizon goal review behind an explicitly
-  activated goal record.
+  registered goal record; registration activates it.
 - update-goal: boundary only; no mutation implementation.
 - timer: implemented through CLI-created schedules and the daemon clock.
 - longhorizon: implemented periodic and goal modes; both are opt-in.
@@ -136,7 +138,7 @@ not retried blindly.
 
 ## Non-goals of this baseline
 
-- no Stopless behavior unless an explicit LongHorizon goal record is activated;
+- no Stopless behavior unless an explicit LongHorizon goal record is registered;
 - no memory capture or injection;
 - no goal mutation or update-goal operator;
 - no provider `reasoningStop` compatibility path;

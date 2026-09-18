@@ -716,7 +716,8 @@ options:
   --review-budget <count>         optional goal review budget; default unlimited
 
 notes:
-  Records are registered paused and require explicit activation.
+  Records are active on registration.
+  goal mode schedules a one-shot liveness check after 60 seconds.
   periodic uses busy_policy=skip.
   The CLI does not expose a separate update or resume command.
 `;

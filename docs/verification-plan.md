@@ -12,6 +12,8 @@ negative probe. Configuration presence is not runtime evidence.
 - verify resource owner and forbidden-edge map is machine-readable;
 - verify the snapshot recovery DAG nodes, edges, resources, and evidence
   bindings in `contracts/snapshot-recovery-dag.json`.
+- verify the notification liveness DAG nodes, edges, resources, and evidence
+  bindings in `contracts/rccs-notification-dag.json`.
 
 ## Runtime lifecycle
 
@@ -37,13 +39,14 @@ explicit failures or incomplete states.
 
 ## Status gate matrix
 
-Run all 18 combinations of nine session states and two send modes. Assert
+Run all 20 combinations of ten session states and two send modes. Assert
 actual codexapp `sendmessage` call count:
 
 ```text
 idle + either mode                 => one send
 working + idle_only                => zero sends, pending persisted
 working + working_allowed           => one send
+interrupted + either mode           => one send
 stopping + either mode              => zero sends, pending persisted
 waiting_for_input + either mode     => one send
 stopped + either mode               => one send

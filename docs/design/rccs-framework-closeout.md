@@ -55,10 +55,10 @@ This ledger separates implemented source edges from remaining boundaries.
 | Read-only MCP server | implemented | keep `routecodex_hooks_status` as the only tool |
 | Idempotent MCP registration | implemented | `rccs mcp register` is called by `rccs init` |
 | Skill installation | implemented into `~/.codex/skills` and `~/.agent/skills` | keep idempotent and document every parameter in the skill |
-| Stopless Stop policy | implemented; `intentFactory` is wired in `daemon-entry.js` behind a disabled-by-default LongHorizon goal record |
+| Stopless Stop policy | implemented; `intentFactory` is wired in `daemon-entry.js` and enabled by a registered LongHorizon goal record |
 | Request/schema augmentation | design-only | no `rccs` command or implemented request-boundary extension |
-| LongHorizon periodic mode | implemented | paused recurring schedule with skip-while-busy behavior |
-| LongHorizon goal mode | implemented | reviewer protocol on Stop with user-interrupt suppression |
+| LongHorizon periodic mode | implemented | active recurring schedule with skip-while-busy behavior |
+| LongHorizon goal mode | implemented | 60-second first liveness check, then reviewer protocol on Stop with user-interrupt suppression |
 
 ## 3. Ownership and data flow
 
@@ -219,6 +219,7 @@ The status gate is the matrix in
 | --- | --- | --- |
 | `input_active=true` | target contract: defer; not live-verified because the current bridge reports `false` | target contract: defer; not live-verified because the current bridge reports `false` |
 | `working` | `busy_policy=defer` persists one pending intent; `busy_policy=skip` records a skipped occurrence and schedules the next interval | queue once; use steer only with an explicit steer request and a live turn identity |
+| `interrupted` | queue once; no live turn is present | queue once; no live turn is present |
 | `starting` or `stopping` | defer | defer |
 | `unknown`, `disconnected`, or `failed` | fail closed | fail closed |
 | `session_missing` | stop recurring firing; remove and re-register after the target is fixed | stop recurring firing; remove and re-register after the target is fixed |
@@ -452,7 +453,8 @@ The Skill documents:
 
 ### 11.1 Stopless policy state
 
-Stopless is disabled by default. Its policy state is namespaced and contains:
+Stopless is inactive until a LongHorizon goal record is registered. Its policy
+state is namespaced and contains:
 
 ```text
 enabled
@@ -466,8 +468,9 @@ last_review_receipt
 ```
 
 `HooksDaemon` accepts an `intentFactory`, and `src/daemon-entry.js` wires the
-goal-review factory. It remains disabled until a LongHorizon goal record is
-activated. The Stop adapter still owns the official `stop_hook_active` guard.
+goal-review factory. Registering a LongHorizon goal record activates it and
+schedules a one-shot liveness check after 60 seconds. The Stop adapter still
+owns the official `stop_hook_active` guard.
 
 ### 11.2 Delivery plane and request plane
 

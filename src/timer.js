@@ -5,6 +5,7 @@ import {
   BUSY_POLICIES,
   SCHEDULE_ACTIONS,
   SCHEDULE_MODES,
+  SEND_OPERATIONS,
   SEND_MODES,
 } from "./protocol.js";
 
@@ -165,11 +166,12 @@ export class TimerOperator {
     const target = normalizeTarget(schedule.target);
     return this.dispatch({
       intent_id: occurrenceId,
-      source: "timer",
+      source: schedule.source || "timer",
       target,
       body: schedule.body,
       send_mode: schedule.send_mode || SEND_MODES.IDLE_ONLY,
       busy_policy: schedule.busy_policy || BUSY_POLICIES.DEFER,
+      operation: SEND_OPERATIONS.QUEUE,
       event_key: occurrenceId,
       expires_at: schedule.expires_at || null,
     });

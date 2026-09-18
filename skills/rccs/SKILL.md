@@ -243,14 +243,14 @@ state and stop evidence.
 
 ## LongHorizon
 
-LongHorizon is registered paused and requires explicit activation:
+LongHorizon is active on registration:
 
 ```sh
 rccs longhorizon register review --mode goal --goal-file /path/goal.md --session work
-rccs longhorizon activate review
 rccs longhorizon list
 rccs longhorizon show review
 rccs longhorizon pause review
+rccs longhorizon activate review
 rccs longhorizon stop review
 ```
 
@@ -269,7 +269,7 @@ rccs longhorizon stop review
 | `--owner-session <session-id>` | current session when available | Ownership scope for list and control. |
 | `--review-budget <count>` | unlimited | Optional cap on reviewer count. Omit it to review every eligible Stop. |
 
-`periodic` mode owns a paused recurring schedule with `busy_policy=skip`.
+`periodic` mode owns an active recurring schedule with `busy_policy=skip`.
 `goal` mode enables Stopless goal review: an eligible Stop event creates one
 isolated ephemeral reviewer, validates its structured report, and decides from
 functional completion, architecture compliance, and any claimed blocker.
@@ -286,7 +286,7 @@ The current CLI supports `register`, `list`, `show`, `activate`, `pause`,
 `stop`, and `remove`. It does not expose a separate LongHorizon update or
 resume command.
 
-`periodic` mode owns a paused recurring schedule with `busy_policy=skip`.
+`periodic` mode owns an active recurring schedule with `busy_policy=skip`.
 `goal` mode enables Stopless goal review: an eligible Stop event creates one
 isolated ephemeral reviewer, validates its structured report, and sends one
 feedback intent only when a gap and next action are present. User interrupts

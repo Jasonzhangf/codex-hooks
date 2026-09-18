@@ -23,6 +23,8 @@ set is:
   acceptance matrix.
 - [rccs-snapshot-recovery-dag.md](docs/design/rccs-snapshot-recovery-dag.md):
   snapshot recovery DAG and rollback boundaries.
+- [rccs-notification-dag.md](docs/design/rccs-notification-dag.md):
+  LongHorizon liveness and notification evidence DAG.
 
 Resource contracts, state machines, ownership, and verification gates are
 under `contracts/` and `docs/verification-plan.md`.

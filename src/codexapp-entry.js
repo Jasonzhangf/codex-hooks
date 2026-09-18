@@ -433,8 +433,14 @@ function normalizeThreadStatus(status) {
   const state = status?.type || status?.state || "unknown";
   const normalized = state === "notLoaded" ? "unknown" : state;
   return {
-    state: ["idle", "active", "working", "starting", "stopping", "systemError", "disconnected", "failed", "unknown"].includes(normalized)
-      ? (normalized === "active" ? "working" : normalized === "systemError" ? "failed" : normalized)
+    state: ["idle", "active", "running", "working", "interrupted", "cancelled", "starting", "stopping", "systemError", "disconnected", "failed", "unknown"].includes(normalized)
+      ? (["active", "running"].includes(normalized)
+        ? "working"
+        : ["interrupted", "cancelled"].includes(normalized)
+          ? "interrupted"
+          : normalized === "systemError"
+            ? "failed"
+            : normalized)
       : "unknown",
     input_active: false,
   };

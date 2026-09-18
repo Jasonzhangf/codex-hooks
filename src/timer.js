@@ -166,8 +166,10 @@ export class TimerOperator {
     if (schedule.current_occurrence === occurrenceId && OCCURRENCE_TERMINAL_STATES.has(schedule.state)) return null;
     if ((schedule.mode || SCHEDULE_MODES.ONCE) === SCHEDULE_MODES.INTERVAL
       && schedule.last_decision === "unknown_delivery"
-      && schedule.last_delivery?.state === "unknown_delivery") {
+      && schedule.last_delivery?.state === "unknown_delivery"
+      && schedule.current_occurrence === occurrenceId) {
       const intentId = schedule.last_delivery.intent_id;
+      if (typeof intentId !== "string" || intentId.trim() === "") return null;
       const intent = typeof this.store.getIntent === "function" ? this.store.getIntent(intentId) : null;
       if (!intent || intent.state === "unknown_delivery") return null;
     }

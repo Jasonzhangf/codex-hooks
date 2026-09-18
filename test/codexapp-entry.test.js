@@ -757,35 +757,88 @@ test("internal codexapp maps every native thread status through the control sock
   }
 });
 
-test("longhorizon liveness DAG applies every native status through the native bridge", async () => {
-  for (const [nativeState, expectedDecision, expectedScheduleState] of [
-    ["active", "skipped", "enabled"],
-    ["running", "skipped", "enabled"],
-    ["idle", "sent", "enabled"],
-    ["interrupted", "sent", "enabled"],
-    ["cancelled", "sent", "enabled"],
-    ["starting", "deferred", "deferred_while_working"],
-    ["stopping", "deferred", "deferred_while_working"],
-    ["systemError", "fail_closed", "enabled"],
-    ["disconnected", "fail_closed", "enabled"],
-    ["failed", "fail_closed", "enabled"],
-    ["unknown", "fail_closed", "enabled"],
-    ["notLoaded", "sent", "enabled"],
-  ]) {
-    const root = await mkdtemp(join(tmpdir(), `routecodex-longhorizon-dag-${nativeState}-`));
-    const appserverSocket = join(root, "appserver.sock");
-    const controlSocket = join(root, "codexapp.sock");
-    const calls = [];
-    const native = await startNativeFixture(appserverSocket, calls, {
-      threadStatus: { type: nativeState },
-      turns: [{ id: "turn-live", status: "inProgress", items: [] }],
+test("internal codexapp treats active without a running turn as wake-eligible idle", async () => {
+  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-active-idle-"));
+  const appserverSocket = join(root, "appserver.sock");
+  const controlSocket = join(root, "codexapp.sock");
+  const calls = [];
+  let native;
+  let codexapp;
+  try {
+    native = await startNativeFixture(appserverSocket, calls, {
+      threadStatus: { type: "active", activeFlags: [] },
+      turns: [],
     });
-    const codexapp = spawn(process.execPath, [
+    codexapp = spawn(process.execPath, [
       "src/codexapp-entry.js",
       "--socket", controlSocket,
       "--targets-file", join(root, "targets.json"),
     ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+    await readLine(codexapp.stdout);
+    await control(controlSocket, "register_target", {
+      scope_id: "local:test",
+      appserver_id: "test-appserver",
+      namespace: "codex_tui",
+      endpoint: `unix://${appserverSocket}`,
+    });
+    const status = await control(controlSocket, "session_status", {
+      address: { scopeId: "local:test", sessionId: "thread-1" },
+    });
+    assert.deepEqual(status.status, { state: "idle", input_active: false });
+    assert.deepEqual(calls.filter(([method]) => method === "thread/turns/list"), [
+      ["thread/turns/list", { threadId: "thread-1", limit: 100, sortDirection: "desc" }],
+    ]);
+  } finally {
+    if (codexapp) {
+      codexapp.kill("SIGTERM");
+      await once(codexapp, "exit");
+    }
+    if (native) await new Promise((resolve) => native.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("longhorizon liveness DAG applies every native status through the native bridge", async () => {
+  for (const {
+    label,
+    threadStatus,
+    turns = [{ id: "turn-live", status: "inProgress", items: [] }],
+    queueListResult,
+    expectedDecision,
+    expectedScheduleState,
+  } of [
+    { label: "active", threadStatus: { type: "active", activeFlags: [] }, expectedDecision: "skipped", expectedScheduleState: "enabled" },
+    { label: "active-no-turn", threadStatus: { type: "active", activeFlags: [] }, turns: [], queueListResult: { data: [{ id: "queued-1", clientUserMessageId: "message-1" }], nextCursor: null }, expectedDecision: "sent", expectedScheduleState: "enabled" },
+    { label: "running", threadStatus: { type: "running" }, expectedDecision: "skipped", expectedScheduleState: "enabled" },
+    { label: "idle", threadStatus: { type: "idle" }, expectedDecision: "sent", expectedScheduleState: "enabled" },
+    { label: "interrupted", threadStatus: { type: "interrupted" }, expectedDecision: "sent", expectedScheduleState: "enabled" },
+    { label: "cancelled", threadStatus: { type: "cancelled" }, expectedDecision: "sent", expectedScheduleState: "enabled" },
+    { label: "starting", threadStatus: { type: "starting" }, expectedDecision: "deferred", expectedScheduleState: "deferred_while_working" },
+    { label: "stopping", threadStatus: { type: "stopping" }, expectedDecision: "deferred", expectedScheduleState: "deferred_while_working" },
+    { label: "systemError", threadStatus: { type: "systemError" }, expectedDecision: "fail_closed", expectedScheduleState: "enabled" },
+    { label: "disconnected", threadStatus: { type: "disconnected" }, expectedDecision: "fail_closed", expectedScheduleState: "enabled" },
+    { label: "failed", threadStatus: { type: "failed" }, expectedDecision: "fail_closed", expectedScheduleState: "enabled" },
+    { label: "unknown", threadStatus: { type: "unknown" }, expectedDecision: "fail_closed", expectedScheduleState: "enabled" },
+    { label: "notLoaded", threadStatus: { type: "notLoaded" }, expectedDecision: "sent", expectedScheduleState: "enabled" },
+  ]) {
+    const nativeState = threadStatus.type;
+    const root = await mkdtemp(join(tmpdir(), `routecodex-longhorizon-dag-${label}-`));
+    const appserverSocket = join(root, "appserver.sock");
+    const controlSocket = join(root, "codexapp.sock");
+    const calls = [];
+    let native;
+    let codexapp;
     try {
+      native = await startNativeFixture(appserverSocket, calls, {
+        threadStatus,
+        turns,
+        ...(queueListResult == null ? {} : { queueListResult }),
+      });
+      codexapp = spawn(process.execPath, [
+        "src/codexapp-entry.js",
+        "--socket", controlSocket,
+        "--targets-file", join(root, "targets.json"),
+      ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
       await readLine(codexapp.stdout);
       await control(controlSocket, "register_target", {
         scope_id: "local:test",
@@ -814,7 +867,7 @@ test("longhorizon liveness DAG applies every native status through the native br
       controlPlane.mutate({ operation: "session.bind", alias: "goal-session", target });
       const registered = controlPlane.mutate({
         operation: "longhorizon.register",
-        id: `goal-${nativeState}`,
+        id: `goal-${label}`,
         mode: "goal",
         goal_file: "/tmp/goal.md",
         session: "goal-session",
@@ -847,9 +900,9 @@ test("longhorizon liveness DAG applies every native status through the native br
             "notLoaded target must resume before the queued wake can execute",
           );
           assert.equal(calls.some(([method]) => method === "thread/queue/start"), false);
-        } else if (["interrupted", "cancelled"].includes(nativeState)) {
+        } else if (["interrupted", "cancelled"].includes(nativeState) || label === "active-no-turn") {
           const started = calls.find(([method]) => method === "thread/queue/start");
-          assert.ok(started, "interrupted target must explicitly start the queued wake");
+          assert.ok(started, "wake-eligible thread must explicitly start the queued wake");
           assert.equal(started[1].threadId, "thread-1");
           assert.equal(started[1].queuedSubmissionId, "queued-1");
         } else {
@@ -860,9 +913,11 @@ test("longhorizon liveness DAG applies every native status through the native br
         assert.equal(calls.some(([method]) => method === "thread/queue/add"), false);
       }
     } finally {
-      codexapp.kill("SIGTERM");
-      await once(codexapp, "exit");
-      await new Promise((resolve) => native.close(resolve));
+      if (codexapp) {
+        codexapp.kill("SIGTERM");
+        await once(codexapp, "exit");
+      }
+      if (native) await new Promise((resolve) => native.close(resolve));
       await rm(root, { recursive: true, force: true });
     }
   }

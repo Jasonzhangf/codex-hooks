@@ -153,6 +153,7 @@ async function sessionStatus(address) {
     try {
       const activeTurnId = await native.activeTurnId(sessionId);
       if (activeTurnId) status.active_turn_id = activeTurnId;
+      else status.state = "idle";
     } catch (error) {
       if (error?.code !== "native_method_unsupported") throw error;
     }
@@ -617,7 +618,15 @@ class NativeAppServer {
     }
     const current = await this.threadStatus(threadId);
     const currentState = current?.status?.type || current?.status?.state || "unknown";
-    if (!["active", "running"].includes(currentState)) {
+    let hasRunningTurn = ["active", "running"].includes(currentState);
+    if (hasRunningTurn) {
+      try {
+        hasRunningTurn = (await this.activeTurnId(threadId)) != null;
+      } catch (error) {
+        if (error?.code !== "native_method_unsupported") throw error;
+      }
+    }
+    if (!hasRunningTurn) {
       const page = await this.rpc.call("thread/queue/list", { threadId, limit: 100 });
       if (!Array.isArray(page?.data)) {
         throw codedError("thread/queue/list returned an invalid queue", "native_transport_error");

@@ -15,6 +15,7 @@ test("rccs command help exits without daemon access or mutation", async () => {
     { args: ["supervisor", "--help"], expected: "rccs supervisor enable" },
     { args: ["operator", "--help"], expected: "rccs operator enable <name>" },
     { args: ["longhorizon", "--help"], expected: "rccs longhorizon register <id>" },
+    { args: ["snapshot", "--help"], expected: "rccs snapshot backup" },
   ];
 
   for (const entry of cases) {
@@ -63,6 +64,11 @@ test("rccs help documents defaults and state semantics", async () => {
   assert.match(longhorizon.stdout, /--mode periodic\|goal/);
   assert.match(longhorizon.stdout, /--review-budget/);
   assert.match(longhorizon.stdout, /registered paused/);
+
+  const snapshot = await runCli(["snapshot", "--help"]);
+  assert.equal(snapshot.code, 0, snapshot.stderr);
+  assert.match(snapshot.stdout, /rccs-recover/);
+  assert.match(snapshot.stdout, /config\.toml/);
 });
 
 test("rccs validates action-specific schedule selectors before mutation", async () => {

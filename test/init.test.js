@@ -30,12 +30,14 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
     assert.equal(fs.statSync(first.daemon_wrapper).mode & 0o111, 0o111);
     assert.equal(fs.statSync(first.supervisor_wrapper).mode & 0o111, 0o111);
     assert.equal(fs.statSync(first.codexapp_wrapper).mode & 0o111, 0o111);
+    assert.equal(fs.statSync(first.recover_wrapper).mode & 0o111, 0o111);
     assert.equal(
       await readFile(join(first.skills_directory, "rccs", "SKILL.md"), "utf8"),
       await readFile(join(process.cwd(), "skills", "rccs", "SKILL.md"), "utf8"),
     );
     assert.equal((await readFile(first.cli_wrapper, "utf8")).includes(first.source_directory), true);
     assert.equal((await readFile(first.rccs_wrapper, "utf8")).includes(first.source_directory), true);
+    assert.equal((await readFile(first.recover_wrapper, "utf8")).includes("RCCS_SNAPSHOT_ROOT"), true);
     const daemonConfig = loadDaemonConfig(first.daemon_config);
     assert.equal(daemonConfig.supervisor.enabled, false);
     assert.equal(daemonConfig.supervisor.codexapp.command, first.codexapp_wrapper);

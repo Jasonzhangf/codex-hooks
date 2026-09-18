@@ -38,6 +38,7 @@ export function installPaths({
     daemonWrapper: join(resolve(binDir), "routecodex-hooksd"),
     supervisorWrapper: join(resolve(binDir), "routecodex-hooks-supervisor"),
     codexappWrapper: join(resolve(binDir), "rccv3-codexapp"),
+    recoverWrapper: join(resolve(binDir), "rccs-recover"),
   };
 }
 
@@ -89,6 +90,7 @@ export function installFromSource({
   writeExecutable(paths.daemonWrapper, wrapperSource(paths.sourceDirectory, "daemon-entry.js", paths.installRecord));
   writeExecutable(paths.supervisorWrapper, wrapperSource(paths.sourceDirectory, "supervisor-entry.js", paths.installRecord));
   writeExecutable(paths.codexappWrapper, wrapperSource(paths.sourceDirectory, "codexapp-entry.js", paths.installRecord));
+  writeExecutable(paths.recoverWrapper, fs.readFileSync(join(source, "src", "rccs-recover.sh")));
 
   const hookConfig = readJsonIfExists(paths.hooksFile) || {};
   removeManagedHooks(hookConfig, [...managedCommands, hookCommand]);
@@ -118,6 +120,7 @@ export function installFromSource({
     daemon_wrapper: paths.daemonWrapper,
     supervisor_wrapper: paths.supervisorWrapper,
     codexapp_wrapper: paths.codexappWrapper,
+    recover_wrapper: paths.recoverWrapper,
     supervisor_enabled: daemonConfig.supervisor.enabled,
     initialized_at: new Date().toISOString(),
   };

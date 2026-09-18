@@ -44,6 +44,8 @@ if (operation === "--help" || operation === "-h") {
   await operatorCommand(args);
 } else if (operation === "longhorizon") {
   await longHorizonCommand(args);
+} else if (operation === "snapshot") {
+  snapshotCommand(args);
 } else if (operation === "config-show") {
   const record = readInstallRecord();
   const daemon = readJson(record.daemon_config);
@@ -479,6 +481,29 @@ async function longHorizonCommand(args) {
   throw new Error("usage: rccs longhorizon register|list|show|activate|pause|stop|remove ...");
 }
 
+function snapshotCommand(args) {
+  if (hasHelp(args)) {
+    printHelp(snapshotHelp());
+    return;
+  }
+  const [subcommand, ...rest] = args;
+  if (!["backup", "list", "restore"].includes(subcommand)) {
+    throw new Error("usage: rccs snapshot backup|list|restore ...");
+  }
+  const record = readInstallRecord();
+  const command = record.recover_wrapper;
+  if (typeof command !== "string" || command === "") {
+    throw new Error("installed rccs-recover command is missing; run rccs init");
+  }
+  const result = spawnSync(command, [subcommand, ...rest], { encoding: "utf8" });
+  if (result.error) throw new Error(`cannot run rccs-recover: ${result.error.message}`);
+  if (result.status !== 0) {
+    process.stderr.write(result.stderr || "");
+    process.exit(result.status ?? 1);
+  }
+  process.stdout.write(result.stdout || "");
+}
+
 function usage() {
   return `
 usage:
@@ -490,6 +515,7 @@ usage:
   rccs wait <duration> [body] [--async]
   rccs subagent create|list|show|stop ...
   rccs longhorizon register|list|show|activate|pause|stop|remove ...
+  rccs snapshot backup|list|restore ...
   rccs mcp register ...
   rccs config show|set ...
   rccs hook enable|disable stop
@@ -693,6 +719,21 @@ notes:
   Records are registered paused and require explicit activation.
   periodic uses busy_policy=skip.
   The CLI does not expose a separate update or resume command.
+`;
+}
+
+function snapshotHelp() {
+  return `
+usage:
+  rccs snapshot backup [--id <snapshot-id>]
+  rccs snapshot list
+  rccs snapshot restore [latest|<snapshot-id>]
+
+notes:
+  Snapshots include rccv3, rccv3-admin, rccv3-hooksd, rccv3-codexapp,
+  config.toml, provider configuration, and alias targets.
+  Recovery is also available without Node or rccs through rccs-recover.
+  restore validates hashes and config, then uses rccv3 restart/status.
 `;
 }
 

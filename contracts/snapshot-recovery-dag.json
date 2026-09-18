@@ -104,7 +104,7 @@
     { "event": "list", "test": "test/snapshot-recover.test.js", "case": "rccs-recover lists snapshots with a latest marker", "assertion": "listed.stdout equals snap-1 then snap-2 latest" },
     { "event": "restore", "test": "test/snapshot-recover.test.js", "case": "rccs-recover restores files and invokes only managed rccv3 lifecycle commands" },
     { "event": "cli_help", "test": "test/cli-help.test.js", "case": "rccs command help exits without daemon access or mutation", "assertion": "snapshot help includes rccs-recover and config.toml" },
-    { "event": "cli_delegation", "test": "test/init.test.js", "case": "init installs local source, skills, wrappers, and one managed Stop hook idempotently", "assertion": "recover_wrapper is executable and contains RCCS_SNAPSHOT_ROOT" },
+    { "event": "cli_delegation", "test": "test/init.test.js", "case": "rccs snapshot delegates list output and recover failures", "assertion": "installed rccs snapshot forwards list stdout and recover exit/stderr" },
     { "event": "snapshot_invalid", "test": "test/snapshot-recover.test.js", "case": "rccs-recover rejects a tampered snapshot before changing live files" },
     { "event": "snapshot_invalid", "test": "test/snapshot-recover.test.js", "case": "rccs-recover rejects unlisted files before changing live files" },
     { "event": "snapshot_config_invalid", "test": "test/snapshot-recover.test.js", "case": "rccs-recover rejects a snapshot whose config check fails" },

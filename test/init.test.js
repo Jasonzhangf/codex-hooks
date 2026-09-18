@@ -65,6 +65,36 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
   }
 });
 
+test("rccs snapshot delegates list output and recover failures", async () => {
+  const codexHome = await mkdtemp(join(tmpdir(), "rccs-snapshot-delegation-"));
+  const home = await mkdtemp(join(tmpdir(), "rccs-snapshot-home-"));
+  try {
+    const receipt = installFromSource({
+      sourceRoot: process.cwd(),
+      codexHome,
+      binDir: join(codexHome, "bin"),
+      agentHome: join(codexHome, "agent"),
+      endpoint: "http://127.0.0.1:9876",
+    });
+    const snapshotRoot = join(home, ".rcc", "state", "backups", "rcc-snapshots");
+    fs.mkdirSync(join(snapshotRoot, "snap-a"), { recursive: true });
+    fs.symlinkSync("snap-a", join(snapshotRoot, "latest"));
+    const env = { ...process.env, HOME: home };
+
+    const listed = await run(receipt.rccs_wrapper, ["snapshot", "list"], { env });
+    assert.equal(listed.code, 0, listed.stderr);
+    assert.equal(listed.stdout, "snap-a latest\n");
+    assert.equal(listed.stderr, "");
+
+    const failed = await run(receipt.rccs_wrapper, ["snapshot", "list", "extra"], { env });
+    assert.notEqual(failed.code, 0);
+    assert.match(failed.stderr, /usage: rccs-recover list/);
+  } finally {
+    await rm(codexHome, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("init canonicalizes IPv6 loopback endpoint before daemon config validation", async () => {
   const codexHome = await mkdtemp(join(tmpdir(), "routecodex-hooks-ipv6-"));
   try {

@@ -140,7 +140,7 @@ test("snapshot recovery DAG binds every edge, resource, and evidence case", asyn
     }
     if (evidence.event === "cli_delegation") {
       assert.equal(evidence.test, "test/init.test.js");
-      assert.match(evidence.assertion, /recover_wrapper/);
+      assert.match(evidence.assertion, /forwards list stdout/);
     }
   }
   for (const event of requiredEvents) {

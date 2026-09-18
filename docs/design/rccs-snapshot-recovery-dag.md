@@ -143,7 +143,7 @@ flowchart TD
 | Rollback failure truth | `test/snapshot-recover.test.js`: reports rollback failure instead of claiming restoration |
 | Standalone boundary | `test/snapshot-recover.test.js`: does not require Node on `PATH` |
 | CLI help | `test/cli-help.test.js`: `rccs snapshot` help includes `rccs-recover` and `config.toml` |
-| CLI delegation | `test/init.test.js`: installed `recover_wrapper` is executable and contains `RCCS_SNAPSHOT_ROOT` |
+| CLI delegation | `test/init.test.js`: installed `rccs snapshot` forwards list output and recover exit/stderr |
 
 ## Verification
 

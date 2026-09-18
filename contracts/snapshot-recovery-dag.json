@@ -51,6 +51,7 @@
     { "from": "snapshot_config_check", "to": "reject_before_mutation", "event": "snapshot_config_invalid" },
     { "from": "rollback_save", "to": "live_replace", "event": "rollback_saved" },
     { "from": "live_replace", "to": "live_config_check", "event": "live_paths_replaced" },
+    { "from": "live_replace", "to": "rollback_restore", "event": "live_replace_failed" },
     { "from": "live_config_check", "to": "runtime_restart", "event": "live_config_valid" },
     { "from": "live_config_check", "to": "rollback_restore", "event": "live_config_invalid" },
     { "from": "runtime_restart", "to": "restore_success", "event": "restore_runtime_ready" },
@@ -91,21 +92,23 @@
     "backup",
     "list",
     "restore",
+    "cli_help",
+    "cli_delegation",
     "snapshot_invalid",
     "snapshot_config_invalid",
     "rollback_ok",
     "rollback_failed"
   ],
   "evidence": [
-    { "event": "backup", "test": "test/snapshot-recover.test.js", "case": "backs up binaries, config, provider, secrets, and aliases" },
-    { "event": "list", "test": "test/snapshot-recover.test.js", "case": "backs up binaries, config, provider, secrets, and aliases" },
-    { "event": "restore", "test": "test/snapshot-recover.test.js", "case": "restores files and invokes only managed rccv3 lifecycle commands" },
-    { "event": "snapshot_invalid", "test": "test/snapshot-recover.test.js", "case": "rejects a tampered snapshot before changing live files" },
-    { "event": "snapshot_invalid", "test": "test/snapshot-recover.test.js", "case": "rejects unlisted files before changing live files" },
-    { "event": "snapshot_config_invalid", "test": "test/snapshot-recover.test.js", "case": "rejects a snapshot whose config check fails" },
-    { "event": "rollback_ok", "test": "test/snapshot-recover.test.js", "case": "rollback removes paths that did not exist before restore" },
-    { "event": "rollback_failed", "test": "test/snapshot-recover.test.js", "case": "reports rollback failure instead of claiming restoration" },
-    { "event": "backup", "test": "test/cli-help.test.js", "case": "snapshot help exits without daemon access or mutation" },
-    { "event": "restore", "test": "test/init.test.js", "case": "init installs local source, skills, wrappers, and one managed Stop hook idempotently" }
+    { "event": "backup", "test": "test/snapshot-recover.test.js", "case": "rccs-recover backs up binaries, config, provider, secrets, and aliases" },
+    { "event": "list", "test": "test/snapshot-recover.test.js", "case": "rccs-recover lists snapshots with a latest marker", "assertion": "listed.stdout equals snap-1 then snap-2 latest" },
+    { "event": "restore", "test": "test/snapshot-recover.test.js", "case": "rccs-recover restores files and invokes only managed rccv3 lifecycle commands" },
+    { "event": "cli_help", "test": "test/cli-help.test.js", "case": "rccs command help exits without daemon access or mutation", "assertion": "snapshot help includes rccs-recover and config.toml" },
+    { "event": "cli_delegation", "test": "test/init.test.js", "case": "init installs local source, skills, wrappers, and one managed Stop hook idempotently", "assertion": "recover_wrapper is executable and contains RCCS_SNAPSHOT_ROOT" },
+    { "event": "snapshot_invalid", "test": "test/snapshot-recover.test.js", "case": "rccs-recover rejects a tampered snapshot before changing live files" },
+    { "event": "snapshot_invalid", "test": "test/snapshot-recover.test.js", "case": "rccs-recover rejects unlisted files before changing live files" },
+    { "event": "snapshot_config_invalid", "test": "test/snapshot-recover.test.js", "case": "rccs-recover rejects a snapshot whose config check fails" },
+    { "event": "rollback_ok", "test": "test/snapshot-recover.test.js", "case": "rccs-recover rollback removes paths that did not exist before restore" },
+    { "event": "rollback_failed", "test": "test/snapshot-recover.test.js", "case": "rccs-recover reports rollback failure instead of claiming restoration" }
   ]
 }

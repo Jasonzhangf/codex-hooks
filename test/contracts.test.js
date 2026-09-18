@@ -76,6 +76,7 @@ test("snapshot recovery DAG binds every edge, resource, and evidence case", asyn
   const nodeIds = new Set(dag.nodes.map((node) => node.id));
   const edgeKeys = new Set(dag.edges.map((edge) => `${edge.from}->${edge.to}:${edge.event}`));
   const eventNames = new Set(dag.edges.map((edge) => edge.event));
+  const requiredEvents = new Set(dag.required_evidence_events);
   const evidenceEvents = new Set(dag.evidence.map((evidence) => evidence.event));
   const resourceIds = new Set(dag.resources.map((resource) => resource.id));
 
@@ -117,11 +118,32 @@ test("snapshot recovery DAG binds every edge, resource, and evidence case", asyn
     }
   }
   for (const evidence of dag.evidence) {
-    assert.ok(eventNames.has(evidence.event), `evidence is not bound to a DAG event: ${evidence.event}`);
+    assert.ok(eventNames.has(evidence.event) || requiredEvents.has(evidence.event), `evidence is not bound to a DAG or required event: ${evidence.event}`);
     assert.match(evidence.test, /^test\/.+\.test\.js$/);
-    assert.ok(evidence.case.length > 0);
+    assert.ok(evidence.case.length > 0, `missing evidence case for event: ${evidence.event}`);
+    const evidenceSource = await readFile(new URL(`../${evidence.test}`, import.meta.url), "utf8");
+    assert.ok(evidenceSource.includes(`test(${JSON.stringify(evidence.case)},`), `evidence case not found: ${evidence.test} :: ${evidence.case}`);
+    if (evidence.event === "backup") {
+      assert.match(evidence.case, /backs up binaries, config, provider, secrets, and aliases/);
+    }
+    if (evidence.event === "list") {
+      assert.equal(evidence.test, "test/snapshot-recover.test.js");
+      assert.match(evidence.case, /lists snapshots with a latest marker/);
+      assert.match(evidence.assertion, /listed\.stdout/);
+    }
+    if (evidence.event === "restore") {
+      assert.match(evidence.case, /restores files and invokes only managed rccv3 lifecycle commands/);
+    }
+    if (evidence.event === "cli_help") {
+      assert.equal(evidence.test, "test/cli-help.test.js");
+      assert.match(evidence.assertion, /snapshot help/);
+    }
+    if (evidence.event === "cli_delegation") {
+      assert.equal(evidence.test, "test/init.test.js");
+      assert.match(evidence.assertion, /recover_wrapper/);
+    }
   }
-  for (const event of dag.required_evidence_events) {
+  for (const event of requiredEvents) {
     assert.ok(evidenceEvents.has(event), `required evidence event is missing: ${event}`);
   }
   assert.ok(dag.invariants.some((invariant) => invariant.includes("rollback failure")));

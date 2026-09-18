@@ -67,6 +67,7 @@ flowchart TD
     R5 -->|no| R2
     R5 -->|yes| R6["save rollback copy of current managed paths"]
     R6 --> R7["replace binaries, config, provider, secrets, aliases"]
+    R7 -->|replace fails| RB["rollback previous managed paths"]
     R7 --> R8{"restored config check passes?"}
     R8 -->|no| RB["rollback previous managed paths"]
     R8 -->|yes| R9["restart through restored rccv3"]
@@ -102,7 +103,7 @@ flowchart TD
 | ID resolution → integrity | `rccs-recover` | snapshot directory | verified manifest and listed file set | tampered/unlisted file; no live mutation |
 | Integrity → config gate | snapshot `rccv3` | snapshot config | config check pass | snapshot rejected before rollback save |
 | Config gate → rollback save | `rccs-recover` | live managed paths | rollback snapshot | live paths unchanged if save fails |
-| Rollback save → live replacement | `rccs-recover` | snapshot + rollback | managed paths replaced | rollback path retained |
+| Rollback save → live replacement | `rccs-recover` | snapshot + rollback | managed paths replaced | replacement failure restores previous paths |
 | Live replacement → validation | restored `rccv3` | live config | config check result | rollback previous paths |
 | Validation → restart | restored `rccv3` | live config | restart/status result | rollback previous paths |
 | Rollback → result | `rccs-recover` | rollback snapshot | previous state restored or explicit failure | never claim restoration when rollback fails |
@@ -132,6 +133,7 @@ flowchart TD
 | Contract edge | Executable evidence |
 | --- | --- |
 | Backup completeness | `test/snapshot-recover.test.js`: backs up binaries, config, provider, secrets, and aliases |
+| List latest marker | `test/snapshot-recover.test.js`: lists snapshots with a latest marker |
 | Restore lifecycle | `test/snapshot-recover.test.js`: restores files and invokes only managed lifecycle commands |
 | Integrity rejection | `test/snapshot-recover.test.js`: tampered snapshot and unlisted file |
 | Snapshot completeness | `test/snapshot-recover.test.js`: refuses an incomplete snapshot |
@@ -140,7 +142,8 @@ flowchart TD
 | Exact rollback | `test/snapshot-recover.test.js`: removes paths absent before restore |
 | Rollback failure truth | `test/snapshot-recover.test.js`: reports rollback failure instead of claiming restoration |
 | Standalone boundary | `test/snapshot-recover.test.js`: does not require Node on `PATH` |
-| CLI delegation | `test/cli-help.test.js` and `test/init.test.js`: `rccs snapshot` help and installed recovery wrapper |
+| CLI help | `test/cli-help.test.js`: `rccs snapshot` help includes `rccs-recover` and `config.toml` |
+| CLI delegation | `test/init.test.js`: installed `recover_wrapper` is executable and contains `RCCS_SNAPSHOT_ROOT` |
 
 ## Verification
 

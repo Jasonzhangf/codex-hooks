@@ -23,10 +23,21 @@ test("rccs-recover backs up binaries, config, provider, secrets, and aliases", a
     assert.equal(await readFile(join(snapshot, "aliases", "rcc"), "utf8"), "rccv3\n");
     assert.equal(await readFile(join(snapshot, "aliases", "routecodex"), "utf8"), "rccv3\n");
     assert.match(await readFile(join(snapshot, "manifest.sha256"), "utf8"), /bin\/rccv3/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("rccs-recover lists snapshots with a latest marker", async () => {
+  const home = await mkdtemp(join(tmpdir(), "rccs-recover-list-"));
+  try {
+    const fixture = await createFixture(home);
+    assert.equal((await run("/bin/sh", [script, "backup", "--id", "snap-1"], { HOME: home })).code, 0);
+    assert.equal((await run("/bin/sh", [script, "backup", "--id", "snap-2"], { HOME: home })).code, 0);
 
     const listed = await run("/bin/sh", [script, "list"], { HOME: home });
     assert.equal(listed.code, 0, listed.stderr);
-    assert.equal(listed.stdout, "snap-1 latest\n");
+    assert.equal(listed.stdout, "snap-1\nsnap-2 latest\n");
   } finally {
     await rm(home, { recursive: true, force: true });
   }

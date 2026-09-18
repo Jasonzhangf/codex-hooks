@@ -303,6 +303,10 @@ function isQueueAlreadyClaimedError(error) {
   return /already has an active or pending turn/i.test(error?.message || "");
 }
 
+function isActiveWriterError(error) {
+  return /already has an active writer/i.test(error?.message || "");
+}
+
 function publicScope(target) {
   return {
     scopeId: target.scope_id,
@@ -593,7 +597,14 @@ class NativeAppServer {
     const thread = await this.threadStatus(threadId);
     const state = thread?.status?.type || thread?.status?.state || "unknown";
     if (state === "notLoaded") {
-      await this.rpc.call("thread/resume", { threadId });
+      try {
+        await this.rpc.call("thread/resume", { threadId });
+      } catch (error) {
+        if (isActiveWriterError(error)) {
+          throw codedError(error.message, "native_thread_busy", error.data);
+        }
+        throw error;
+      }
     }
     const queued = await this.rpc.call("thread/queue/add", {
       threadId,

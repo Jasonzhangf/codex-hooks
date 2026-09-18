@@ -105,7 +105,8 @@
         ["deferred", "cancelled", "cancelled"],
         ["accepted", "retryable_transport_error", "retryable"],
         ["created", "duplicate_intent", "deduplicated"],
-        ["retryable", "new_attempt", "emitted"]
+        ["retryable", "new_attempt", "emitted"],
+        ["sending", "native_thread_busy", "deferred"]
       ]
     },
     "schedule": {
@@ -118,6 +119,7 @@
         ["enabled", "disable", "disabled"],
         ["due", "claim", "claimed"],
         ["claimed", "working", "deferred_while_working"],
+        ["deferred_while_working", "native_thread_busy", "deferred_while_working"],
         ["claimed", "busy_skip", "skipped"],
         ["claimed", "send", "send_pending"],
         ["send_pending", "accepted", "sent"],

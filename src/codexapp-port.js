@@ -34,6 +34,7 @@ const DEFINITIVE_SEND_ERRORS = new Set([
   "cross_scope_master_required",
   "cross_scope_target_must_be_master",
   "scope_peer_route_forbidden",
+  "native_thread_busy",
 ]);
 
 export function assertCodexAppPort(port) {

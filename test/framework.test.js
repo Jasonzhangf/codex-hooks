@@ -470,6 +470,23 @@ test("deferred resume records unknown status and send failures without claiming 
   assert.equal(failed.failed[0].evidence.code, "transport_down");
 });
 
+test("deferred resume failure never reports a sent decision without sent evidence", async () => {
+  const codexapp = fakeCodexapp("working");
+  const daemon = new HooksDaemon({ codexapp });
+  await daemon.handleHook(event("Stop", { event_id: "resume-failure-decision" }), {
+    intent: intent("resume-failure-decision", SEND_MODES.IDLE_ONLY),
+  });
+  codexapp.state = "idle";
+  codexapp.send_message = async () => {
+    throw Object.assign(new Error("transport down"), { code: "transport_down" });
+  };
+
+  const failed = await daemon.flushPending(target());
+  assert.equal(failed.sent.length, 0);
+  assert.equal(failed.failed.length, 1);
+  assert.equal(failed.decision, "fail_closed");
+});
+
 test("uncertain send timeout remains unknown_delivery during initial send and resume", async () => {
   const codexapp = fakeCodexapp("idle");
   codexapp.send_message = async () => { throw Object.assign(new Error("send timed out"), { code: "transport_timeout" }); };

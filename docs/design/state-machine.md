@@ -70,7 +70,7 @@ events still pass validation and idempotency.
 created -> suppressed | queued | deferred | emitted
 emitted -> sending -> accepted -> sent -> delivered -> executed -> replied
                                             -> read -> consumed/acknowledged
-sending -> failed | unknown_delivery
+sending -> deferred (native thread busy) | failed | unknown_delivery
 unknown_delivery -> delivered only after matching native evidence
 retryable -> emitted only with a new attempt identity
 created -> deduplicated | expired | cancelled

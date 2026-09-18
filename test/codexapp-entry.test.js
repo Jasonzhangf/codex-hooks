@@ -122,6 +122,64 @@ test("internal codexapp preserves the first unsupported history read error", asy
   }
 });
 
+test("internal codexapp reports an active writer during notLoaded resume as definitive", async () => {
+  const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-writer-busy-"));
+  const appserverSocket = join(root, "appserver.sock");
+  const controlSocket = join(root, "codexapp.sock");
+  const calls = [];
+  const native = await startNativeFixture(appserverSocket, calls, {
+    threadStatus: { type: "notLoaded" },
+    threadResumeError: {
+      code: -32600,
+      message: "thread thread-1 already has an active writer",
+    },
+  });
+  const codexapp = spawn(process.execPath, [
+    "src/codexapp-entry.js",
+    "--socket", controlSocket,
+    "--targets-file", join(root, "targets.json"),
+  ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+  const port = new CodexAppBridgePort({
+    socket: controlSocket,
+    source: { scopeId: "local:hooks", sessionId: "hooksd" },
+    source_kind: "service",
+    target_scopes: { "codex_tui/test-appserver": "local:test" },
+  });
+  try {
+    await readLine(codexapp.stdout);
+    await control(controlSocket, "register_target", {
+      scope_id: "local:test",
+      appserver_id: "test-appserver",
+      namespace: "codex_tui",
+      endpoint: `unix://${appserverSocket}`,
+    });
+    await assert.rejects(
+      port.send_message({
+        target: {
+          namespace: "codex_tui",
+          appserver_id: "test-appserver",
+          scope_id: "local:test",
+          session_id: "thread-1",
+          thread_id: "thread-1",
+        },
+        body: "probe",
+        attempt_id: "writer-busy",
+      }),
+      (error) => error.code === "native_thread_busy" && error.uncertain !== true,
+    );
+    assert.equal(calls.some(([method]) => method === "thread/resume"), true);
+    assert.equal(calls.some(([method]) => method === "thread/queue/add"), false);
+    assert.equal(calls.some(([method]) => method === "thread/queue/start"), false);
+    assert.equal(calls.some(([method]) => method === "turn/steer"), false);
+  } finally {
+    port.close();
+    codexapp.kill("SIGTERM");
+    await once(codexapp, "exit");
+    await new Promise((resolve) => native.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("internal codexapp discovers loaded threads without calling thread/list", async () => {
   const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-discover-"));
   const appserverSocket = join(root, "appserver.sock");
@@ -875,11 +933,13 @@ async function startNativeFixture(socketPath, calls, options = {}) {
             },
           },
         };
-        else if (request.method === "thread/resume") response = {
-          result: options.threadResumeResult || {
-            thread: { id: request.params.threadId, status: { type: "idle" } },
-          },
-        };
+        else if (request.method === "thread/resume") response = options.threadResumeError
+          ? { error: options.threadResumeError }
+          : {
+            result: options.threadResumeResult || {
+              thread: { id: request.params.threadId, status: { type: "idle" } },
+            },
+          };
         else if (request.method === "thread/queue/list") response = {
           result: options.queueListResult || (
             ["interrupted", "cancelled"].includes(options.threadStatus?.type)

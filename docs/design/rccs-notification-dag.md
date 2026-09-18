@@ -118,8 +118,6 @@ flowchart TD
 | Queue-only delivery | `test/longhorizon-liveness.test.js`: uses queue and never steers |
 | Evidence progression | `test/longhorizon-liveness.test.js`: accepted evidence is not promoted to executed |
 | Uncertain reconciliation | `test/longhorizon-liveness.test.js`: uncertain delivery reconciles without blind retry |
-| Native status mapping | `test/codexapp-entry.test.js`: maps live and interrupted native status through the control socket |
-
 ## Verification
 
 The feature is closed only when all of the following hold:

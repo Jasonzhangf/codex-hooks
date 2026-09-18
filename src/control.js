@@ -10,6 +10,7 @@ import {
   SCHEDULE_MODES,
   SEND_MODES,
 } from "./protocol.js";
+import { isTimerTerminalSchedule } from "./timer.js";
 
 export const OPERATOR_REGISTRY = Object.freeze([
   { name: "stopless", hook_kinds: ["stop"], state_resource: "stopless_state", status: "implemented" },
@@ -551,6 +552,68 @@ export class FrameworkControlPlane {
     }
     this.syncOperatorState(records);
     return clone(records[id]);
+  }
+
+  reconcileLongHorizon() {
+    const records = this.store.getControl("longhorizon") || {};
+    const schedules = this.store.getControl("schedules") || {};
+    const reconciled = [];
+    for (const [id, record] of Object.entries(records)) {
+      if (record?.mode !== "goal" || record.enabled !== true || record.state !== "active") continue;
+      if (!record.goal_file || !record.session) {
+        throw new Error(`active longhorizon goal is missing goal_file or session: ${id}`);
+      }
+      const baseId = `longhorizon-liveness:${id}`;
+      const existingId = record.liveness_schedule_id || baseId;
+      const existing = schedules[existingId];
+      if (existing
+        && existing.enabled === true
+        && !isTimerTerminalSchedule(existing)
+        && existing.mode === SCHEDULE_MODES.INTERVAL
+        && existing.source === "longhorizon") {
+        records[id] = {
+          ...record,
+          liveness_schedule_id: existingId,
+          liveness_check_due_at: existing.next_at || existing.at,
+          liveness_state: "scheduled",
+        };
+        reconciled.push({ id, schedule_id: existingId, at: existing.next_at || existing.at });
+        continue;
+      }
+      const scheduleId = existing
+        ? `${baseId}:generation:${Date.parse(this.now())}`
+        : existingId;
+      const target = this.resolveSessionTarget(record.session);
+      const at = new Date(Date.parse(this.now()) + LONGHORIZON_LIVENESS_DELAY_MS).toISOString();
+      const schedule = this.upsertSchedule({
+        operation: "schedule.upsert",
+        id: scheduleId,
+        action: SCHEDULE_ACTIONS.NOTIFY,
+        mode: SCHEDULE_MODES.INTERVAL,
+        at,
+        interval_ms: LONGHORIZON_LIVENESS_DELAY_MS,
+        body: `LongHorizon goal liveness check. Read ${record.goal_file} and continue executing the goal if the target is idle or interrupted. Do not duplicate work if it is already active or running.`,
+        target,
+        send_mode: SEND_MODES.IDLE_ONLY,
+        busy_policy: BUSY_POLICIES.SKIP,
+        owner_session_id: record.owner_session_id || target.thread_id,
+        source: "longhorizon",
+      });
+      records[id] = {
+        ...record,
+        target,
+        owner_session_id: record.owner_session_id || target.thread_id,
+        liveness_schedule_id: schedule.id,
+        liveness_check_due_at: schedule.at,
+        liveness_state: "scheduled",
+      };
+      reconciled.push({ id, schedule_id: schedule.id, at: schedule.at });
+    }
+    if (reconciled.length > 0) {
+      this.store.putControl("longhorizon", records);
+      this.syncOperatorState(records);
+    }
+    return reconciled;
   }
 
   stopLongHorizon(request) {

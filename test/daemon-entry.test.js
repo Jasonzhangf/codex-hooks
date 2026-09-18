@@ -131,6 +131,70 @@ test("daemon entry drives a due timer through codexapp", async () => {
   }
 });
 
+test("daemon entry reconciles an active goal with no live liveness schedule", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-hooks-entry-longhorizon-"));
+  const socketPath = join(directory, "codexapp.sock");
+  const statePath = join(directory, "state.json");
+  const configPath = join(directory, "hooksd.json");
+  const bridge = await startBridgeFixture(socketPath, { sendToIdle: true });
+  const store = new JsonStateStore(statePath);
+  const target = {
+    namespace: "codex_tui",
+    appserver_id: "tui-appserver",
+    scope_id: "local:tui",
+    session_id: "thread-1",
+    thread_id: "thread-1",
+  };
+  store.putControl("operators", { longhorizon: { enabled: true }, timer: { enabled: true } });
+  store.putControl("session_bindings", {
+    "goal-session": { alias: "goal-session", target, bound_at: "2026-09-18T12:00:00.000Z" },
+  });
+  store.putControl("longhorizon", {
+    "legacy-goal": {
+      id: "legacy-goal",
+      mode: "goal",
+      enabled: true,
+      state: "active",
+      goal_file: "/tmp/legacy-goal.md",
+      session: "goal-session",
+      target,
+      registered_at: "2026-09-18T12:00:00.000Z",
+      activated_at: "2026-09-18T12:00:00.000Z",
+    },
+  });
+  await writeFile(configPath, JSON.stringify({
+    runtime: { host: "127.0.0.1", port: 0, state_directory: directory },
+    codexapp: {
+      socket: socketPath,
+      required_capabilities: ["session_status", "send_message_to_thread"],
+      source_kind: "service",
+      source_address: { scopeId: "local:hooks", sessionId: "hooksd" },
+      target_scopes: { "codex_tui/tui-appserver": "local:tui" },
+    },
+    policies: [],
+  }), "utf8");
+  const child = spawn(process.execPath, ["src/daemon-entry.js", "--config", configPath, "--state-file", statePath], {
+    cwd: new URL("..", import.meta.url),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    const ready = JSON.parse(await readLine(child.stdout));
+    assert.equal(ready.reconciled_longhorizon, 1);
+    const record = new JsonStateStore(statePath).getControl("longhorizon")["legacy-goal"];
+    const schedule = new JsonStateStore(statePath).getControl("schedules")[record.liveness_schedule_id];
+    assert.equal(record.liveness_state, "scheduled");
+    assert.equal(schedule.mode, "interval");
+    assert.equal(schedule.interval_ms, 60_000);
+    assert.equal(schedule.enabled, true);
+    assert.equal(schedule.source, "longhorizon");
+  } finally {
+    child.kill("SIGTERM");
+    await once(child, "exit");
+    await new Promise((resolve) => bridge.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function readLine(stream) {
   return new Promise((resolve, reject) => {
     let buffer = "";

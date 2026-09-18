@@ -27,6 +27,7 @@ const daemon = new HooksDaemon({
 });
 const recovered = daemon.recoverOutbox();
 const control = new FrameworkControlPlane({ store: daemon.store, subagents: daemon });
+const reconciledLongHorizon = control.reconcileLongHorizon();
 const goalReview = new GoalReviewRunner({
   store: daemon.store,
   daemon,
@@ -83,7 +84,7 @@ reconcileInterval = setInterval(() => {
     });
 }, RECONCILE_INTERVAL_MS);
 
-process.stdout.write(`${JSON.stringify({ protocol: "routecodex-hooks/v1", ready: true, endpoint, state_file: stateFile, recovered_outbox: recovered.length })}\n`);
+process.stdout.write(`${JSON.stringify({ protocol: "routecodex-hooks/v1", ready: true, endpoint, state_file: stateFile, recovered_outbox: recovered.length, reconciled_longhorizon: reconciledLongHorizon.length })}\n`);
 
 let stopping = false;
 async function shutdown() {

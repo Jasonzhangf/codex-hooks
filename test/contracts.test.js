@@ -197,7 +197,7 @@ test("notification liveness DAG binds every gate, resource, and evidence case", 
     assert.ok(nodeIds.has(binding.node), `implementation binding has unknown node: ${binding.node}`);
     const source = binding.symbol === "tick" || binding.symbol === "dispatchNotify"
       ? timerSource
-      : binding.symbol === "registerLongHorizon" || binding.symbol === "upsertSchedule"
+      : binding.symbol === "registerLongHorizon" || binding.symbol === "upsertSchedule" || binding.symbol === "reconcileLongHorizon"
         ? controlSource
         : daemonSource;
     assert.match(source, new RegExp(`${binding.symbol}\\(`), `missing source symbol: ${binding.symbol}`);

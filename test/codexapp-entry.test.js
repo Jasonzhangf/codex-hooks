@@ -638,6 +638,55 @@ test("internal codexapp steers a live turn through turn/steer", async () => {
   }
 });
 
+test("internal codexapp maps live and interrupted native status through the control socket", async () => {
+  for (const [nativeState, expectedState] of [
+    ["active", "working"],
+    ["running", "working"],
+    ["interrupted", "interrupted"],
+    ["cancelled", "interrupted"],
+  ]) {
+    const root = await mkdtemp(join(tmpdir(), `routecodex-codexapp-status-${nativeState}-`));
+    const appserverSocket = join(root, "appserver.sock");
+    const controlSocket = join(root, "codexapp.sock");
+    const calls = [];
+    const native = await startNativeFixture(appserverSocket, calls, {
+      threadStatus: { type: nativeState },
+      turns: [{ id: "turn-live", status: "inProgress", items: [] }],
+    });
+    const codexapp = spawn(process.execPath, [
+      "src/codexapp-entry.js",
+      "--socket", controlSocket,
+      "--targets-file", join(root, "targets.json"),
+    ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+    try {
+      await readLine(codexapp.stdout);
+      await control(controlSocket, "register_target", {
+        scope_id: "local:test",
+        appserver_id: "test-appserver",
+        namespace: "codex_tui",
+        endpoint: `unix://${appserverSocket}`,
+      });
+      const status = await control(controlSocket, "session_status", {
+        address: { scopeId: "local:test", sessionId: "thread-1" },
+      });
+      assert.deepEqual(status.status, {
+        state: expectedState,
+        input_active: false,
+        ...(expectedState === "working" ? { active_turn_id: "turn-live" } : {}),
+      });
+      assert.equal(
+        calls.some(([method]) => method === "thread/turns/list"),
+        expectedState === "working",
+      );
+    } finally {
+      codexapp.kill("SIGTERM");
+      await once(codexapp, "exit");
+      await new Promise((resolve) => native.close(resolve));
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
 async function control(socketPath, method, params = {}) {
   const response = await new Promise((resolve, reject) => {
     const socket = net.createConnection(socketPath);

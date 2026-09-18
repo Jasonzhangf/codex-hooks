@@ -102,6 +102,25 @@ test("working_allowed timer explicitly sends while working", async () => {
   assert.equal(codexapp.sends.length, 1);
 });
 
+test("timer dispatch preserves the schedule source for longhorizon liveness", async () => {
+  const { store } = setup();
+  const schedules = store.getControl("schedules");
+  schedules["daily-check"] = { ...schedules["daily-check"], source: "longhorizon" };
+  store.putControl("schedules", schedules);
+  let intent = null;
+  const timer = new TimerOperator({
+    store,
+    clock: new ManualClock("2026-09-11T10:00:00.000Z"),
+    dispatch: async (value) => {
+      intent = value;
+      return { decision: "sent", delivery: { state: "accepted" } };
+    },
+  });
+
+  await timer.tick();
+  assert.equal(intent.source, "longhorizon");
+});
+
 test("busy_policy=skip records one skipped occurrence without queueing a backlog", async () => {
   const { codexapp, daemon, store } = setup({ state: "working", busyPolicy: "skip" });
   const schedules = store.getControl("schedules");

@@ -25,11 +25,12 @@
       ]
     },
     "session": {
-      "states": ["idle", "working", "waiting_for_input", "stopping", "stopped", "starting", "disconnected", "failed", "unknown"],
+      "states": ["idle", "working", "interrupted", "waiting_for_input", "stopping", "stopped", "starting", "disconnected", "failed", "unknown"],
       "gate": {
         "idle_only": {
           "idle": "send",
           "working": "defer",
+          "interrupted": "send",
           "waiting_for_input": "send",
           "stopping": "defer",
           "stopped": "send",
@@ -41,6 +42,7 @@
         "working_allowed": {
           "idle": "send",
           "working": "send",
+          "interrupted": "send",
           "waiting_for_input": "send",
           "stopping": "defer",
           "stopped": "send",
@@ -108,7 +110,7 @@
     },
     "schedule": {
       "initial": "absent",
-      "states": ["absent", "configured", "enabled", "disabled", "due", "claimed", "deferred_while_working", "send_pending", "skipped", "sent", "completed", "failed", "retryable", "expired", "session_missing", "cancelled", "stopped"],
+      "states": ["absent", "configured", "enabled", "disabled", "due", "claimed", "deferred_while_working", "send_pending", "skipped", "sent", "completed", "failed", "unknown_delivery", "retryable", "expired", "session_missing", "cancelled", "stopped"],
       "transitions": [
         ["absent", "upsert", "configured"],
         ["configured", "enable", "enabled"],
@@ -119,6 +121,7 @@
         ["claimed", "busy_skip", "skipped"],
         ["claimed", "send", "send_pending"],
         ["send_pending", "accepted", "sent"],
+        ["send_pending", "uncertain_transport", "unknown_delivery"],
         ["sent", "occurrence_complete", "completed"],
         ["claimed", "error", "failed"],
         ["claimed", "session_missing", "session_missing"],

@@ -127,7 +127,8 @@ Required review checks:
 - ephemeral creation/release/no-delete semantics;
 - MCP remains read-only;
 - skill parameters match CLI behavior;
-- Stopless `intentFactory` wiring is disabled by default;
+- Stopless `intentFactory` wiring is enabled only by a registered LongHorizon
+  goal record;
 - request/schema injection is not claimed as implemented;
 - no forbidden fallback, second send path, or fake evidence;
 - no modifications outside the allowed scope.

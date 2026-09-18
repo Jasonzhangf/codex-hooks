@@ -36,8 +36,10 @@ test("state machine covers every session state and send mode", async () => {
   for (const state of ["degraded", "stopping", "stopped", "crashed", "restarting"]) assert.ok(machine.machines.runtime.states.includes(state), `missing runtime state: ${state}`);
   for (const action of ["observe", "allow", "deny", "delay", "inject"]) assert.ok(machine.machines.hook.states.includes(action), `missing hook action: ${action}`);
   assert.ok(machine.machines.schedule.states.includes("session_missing"));
+  assert.ok(machine.machines.schedule.states.includes("unknown_delivery"));
   assert.ok(machine.machines.schedule.states.includes("stopped"));
   assert.ok(machine.machines.schedule.states.includes("skipped"));
+  assert.ok(machine.machines.schedule.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["send_pending", "uncertain_transport", "unknown_delivery"])));
   assert.ok(machine.machines.schedule.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["enabled", "stop", "stopped"])));
   assert.ok(machine.machines.subagent.states.includes("stopped"));
   assert.ok(machine.machines.subagent.states.includes("released"));
@@ -148,4 +150,71 @@ test("snapshot recovery DAG binds every edge, resource, and evidence case", asyn
   }
   assert.ok(dag.invariants.some((invariant) => invariant.includes("rollback failure")));
   assert.ok(map.forbidden.some((edge) => edge.owner === "rccs-recover" && edge.operation.includes("unverified")));
+});
+
+test("notification liveness DAG binds every gate, resource, and evidence case", async () => {
+  const dag = await readJson("../contracts/rccs-notification-dag.json");
+  const map = await readJson("../contracts/resource-map.json");
+  const controlSource = await readFile(new URL("../src/control.js", import.meta.url), "utf8");
+  const timerSource = await readFile(new URL("../src/timer.js", import.meta.url), "utf8");
+  const daemonSource = await readFile(new URL("../src/daemon.js", import.meta.url), "utf8");
+  const resourceOwners = new Map(map.resources.map((resource) => [resource.id, resource.owner]));
+  const nodeIds = new Set(dag.nodes.map((node) => node.id));
+  const edgeKeys = new Set(dag.edges.map((edge) => `${edge.from}->${edge.to}:${edge.event}`));
+  const eventNames = new Set(dag.edges.map((edge) => edge.event));
+  const requiredEvents = new Set(dag.required_evidence_events);
+  const evidenceEvents = new Set(dag.evidence.map((evidence) => evidence.event));
+  const resourceIds = new Set(dag.resources.map((resource) => resource.id));
+
+  assert.equal(nodeIds.size, dag.nodes.length);
+  assert.equal(edgeKeys.size, dag.edges.length);
+  for (const edge of dag.edges) {
+    assert.ok(nodeIds.has(edge.from), `unknown notification DAG source node: ${edge.from}`);
+    assert.ok(nodeIds.has(edge.to), `unknown notification DAG destination node: ${edge.to}`);
+    assert.ok(edge.event, `missing notification DAG edge event: ${edge.from}->${edge.to}`);
+  }
+  const incoming = new Map([...nodeIds].map((id) => [id, 0]));
+  const outgoing = new Map([...nodeIds].map((id) => [id, []]));
+  for (const edge of dag.edges) {
+    incoming.set(edge.to, incoming.get(edge.to) + 1);
+    outgoing.get(edge.from).push(edge.to);
+  }
+  const queue = [...nodeIds].filter((id) => incoming.get(id) === 0);
+  let visited = 0;
+  while (queue.length > 0) {
+    const id = queue.shift();
+    visited += 1;
+    for (const next of outgoing.get(id)) {
+      incoming.set(next, incoming.get(next) - 1);
+      if (incoming.get(next) === 0) queue.push(next);
+    }
+  }
+  assert.equal(visited, nodeIds.size, "notification liveness graph must be acyclic");
+  for (const resource of dag.resources) {
+    assert.equal(resourceOwners.get(resource.id), resource.owner, `resource owner mismatch: ${resource.id}`);
+  }
+  for (const binding of dag.implementation_bindings) {
+    assert.ok(nodeIds.has(binding.node), `implementation binding has unknown node: ${binding.node}`);
+    const source = binding.symbol === "tick" || binding.symbol === "dispatchNotify"
+      ? timerSource
+      : binding.symbol === "registerLongHorizon" || binding.symbol === "upsertSchedule"
+        ? controlSource
+        : daemonSource;
+    assert.match(source, new RegExp(`${binding.symbol}\\(`), `missing source symbol: ${binding.symbol}`);
+    for (const resource of binding.resources) {
+      assert.ok(resourceIds.has(resource), `implementation binding has unknown resource: ${resource}`);
+    }
+  }
+  for (const evidence of dag.evidence) {
+    assert.ok(eventNames.has(evidence.event) || requiredEvents.has(evidence.event), `evidence is not bound to a DAG or required event: ${evidence.event}`);
+    assert.match(evidence.test, /^test\/.+\.test\.js$/);
+    assert.ok(evidence.case.length > 0, `missing evidence case for event: ${evidence.event}`);
+    const evidenceSource = await readFile(new URL(`../${evidence.test}`, import.meta.url), "utf8");
+    assert.ok(evidenceSource.includes(`test(${JSON.stringify(evidence.case)},`), `evidence case not found: ${evidence.test} :: ${evidence.case}`);
+  }
+  for (const event of requiredEvents) {
+    assert.ok(evidenceEvents.has(event), `required evidence event is missing: ${event}`);
+  }
+  assert.ok(dag.invariants.some((invariant) => invariant.includes("never steer")));
+  assert.ok(dag.invariants.some((invariant) => invariant.includes("never blindly retried")));
 });

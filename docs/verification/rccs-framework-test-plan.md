@@ -129,7 +129,7 @@ Command:
 node --test test/framework.test.js
 ```
 
-Precondition: exercise all nine session states with both send modes. The
+Precondition: exercise all ten session states with both send modes. The
 `input_active=true` rows are a future/target test until the bridge reports real
 input state instead of the current constant `false`.
 

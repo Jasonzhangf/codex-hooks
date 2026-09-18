@@ -113,6 +113,32 @@ test("schedule busy policy defaults to defer and is patchable", () => {
   assert.equal(updated.busy_policy, "skip");
 });
 
+test("schedule source is restricted to registered message owners", () => {
+  const daemon = new HooksDaemon({ codexapp: codexapp() });
+  const control = new FrameworkControlPlane({ store: daemon.store });
+  const target = { namespace: "codex_tui", appserver_id: "app", session_id: "session", thread_id: "thread" };
+  const schedule = control.mutate({
+    operation: "schedule.upsert",
+    id: "sourced",
+    at: "2026-09-10T12:00:00Z",
+    body: "wake",
+    target,
+    source: "longhorizon",
+  });
+  assert.equal(schedule.source, "longhorizon");
+  assert.throws(
+    () => control.mutate({
+      operation: "schedule.upsert",
+      id: "forged",
+      at: "2026-09-10T12:00:00Z",
+      body: "wake",
+      target,
+      source: "forged",
+    }),
+    /unsupported message source: forged/,
+  );
+});
+
 test("session binding resolves a schedule without duplicating session identity", () => {
   const daemon = new HooksDaemon({ codexapp: codexapp() });
   const control = new FrameworkControlPlane({ store: daemon.store });
@@ -663,9 +689,10 @@ test("session_missing schedules are terminal for resume and update", () => {
   assert.equal(control.query().schedules["missing-session"].enabled, false);
 });
 
-test("longhorizon registration is paused until explicit activation", () => {
+test("longhorizon registration is active and schedules a 60 second liveness check", () => {
   const daemon = new HooksDaemon({ codexapp: codexapp() });
-  const control = new FrameworkControlPlane({ store: daemon.store });
+  let now = "2026-09-18T12:00:00.000Z";
+  const control = new FrameworkControlPlane({ store: daemon.store, now: () => now });
   control.mutate({
     operation: "session.bind",
     alias: "goal-session",
@@ -679,32 +706,43 @@ test("longhorizon registration is paused until explicit activation", () => {
     session: "goal-session",
     review_budget: 2,
   });
-  assert.equal(registered.enabled, false);
-  assert.equal(registered.state, "registered");
+  assert.equal(registered.enabled, true);
+  assert.equal(registered.state, "active");
+  assert.equal(registered.activated_at, now);
   assert.equal(registered.review_count, 0);
-  assert.equal(control.query().operators.stopless.enabled, false);
-  assert.equal(control.query().operators.longhorizon.enabled, false);
-
-  const active = control.mutate({ operation: "longhorizon.activate", id: "goal-1" });
-  assert.equal(active.enabled, true);
-  assert.equal(active.state, "active");
   assert.equal(control.query().operators.stopless.enabled, true);
   assert.equal(control.query().operators.longhorizon.enabled, true);
+  assert.equal(control.query().operators.stopless.enabled, true);
+  const liveness = control.query().schedules[registered.liveness_schedule_id];
+  assert.equal(liveness.source, "longhorizon");
+  assert.equal(liveness.at, "2026-09-18T12:01:00.000Z");
+  assert.equal(liveness.send_mode, "idle_only");
+  assert.equal(liveness.busy_policy, "skip");
+  assert.equal(liveness.body.includes("/tmp/goal.md"), true);
 
   const paused = control.mutate({ operation: "longhorizon.pause", id: "goal-1" });
   assert.equal(paused.enabled, false);
   assert.equal(paused.state, "paused");
+  assert.equal(control.query().schedules[registered.liveness_schedule_id].enabled, false);
   assert.equal(control.query().operators.stopless.enabled, false);
+
+  now = "2026-09-18T12:00:30.000Z";
+  const active = control.mutate({ operation: "longhorizon.activate", id: "goal-1" });
+  assert.equal(active.enabled, true);
+  assert.equal(active.state, "active");
+  assert.equal(control.query().schedules[registered.liveness_schedule_id].at, "2026-09-18T12:01:30.000Z");
+  assert.equal(control.query().operators.stopless.enabled, true);
 
   const stopped = control.mutate({ operation: "longhorizon.stop", id: "goal-1" });
   assert.equal(stopped.state, "stopped");
+  assert.equal(control.query().schedules[registered.liveness_schedule_id].state, "stopped");
   assert.throws(
     () => control.mutate({ operation: "longhorizon.activate", id: "goal-1" }),
     /longhorizon is stopped/,
   );
 });
 
-test("periodic longhorizon owns a paused skip schedule and stop closes it", () => {
+test("periodic longhorizon owns an active skip schedule and stop closes it", () => {
   const daemon = new HooksDaemon({ codexapp: codexapp() });
   const control = new FrameworkControlPlane({ store: daemon.store });
   control.mutate({
@@ -721,15 +759,13 @@ test("periodic longhorizon owns a paused skip schedule and stop closes it", () =
     interval_ms: 1000,
     at: "2026-09-17T00:00:00.000Z",
   });
-  assert.equal(registered.enabled, false);
-  assert.equal(registered.schedule_state, "disabled");
+  assert.equal(registered.enabled, true);
+  assert.equal(registered.schedule_state, "enabled");
   const schedule = control.query().schedules[registered.schedule_id];
   assert.equal(schedule.busy_policy, "skip");
   assert.equal(schedule.send_mode, "idle_only");
-  assert.equal(schedule.enabled, false);
+  assert.equal(schedule.enabled, true);
 
-  control.mutate({ operation: "longhorizon.activate", id: "periodic-1" });
-  assert.equal(control.query().schedules[registered.schedule_id].enabled, true);
   const stopped = control.mutate({ operation: "longhorizon.stop", id: "periodic-1" });
   assert.equal(stopped.state, "stopped");
   assert.equal(control.query().schedules[registered.schedule_id].state, "stopped");
@@ -766,8 +802,8 @@ test("periodic longhorizon activation cannot resurrect a session_missing schedul
     /longhorizon schedule is terminal/,
   );
   const longhorizon = control.query().longhorizon["periodic-missing"];
-  assert.equal(longhorizon.enabled, false);
-  assert.equal(longhorizon.state, "registered");
+  assert.equal(longhorizon.enabled, true);
+  assert.equal(longhorizon.state, "active");
   assert.equal(control.query().schedules[registered.schedule_id].state, "session_missing");
   assert.equal(control.query().schedules[registered.schedule_id].enabled, false);
 });

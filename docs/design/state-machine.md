@@ -23,8 +23,9 @@ is unavailable; it never means hooksd is ready.
 
 ## Codex session dimension
 
-The observed states are `unknown`, `starting`, `working`, `idle`,
-`waiting_for_input`, `stopping`, `stopped`, `disconnected`, and `failed`.
+The observed states are `unknown`, `starting`, `working`, `interrupted`,
+`idle`, `waiting_for_input`, `stopping`, `stopped`, `disconnected`, and
+`failed`.
 The orthogonal `input_active` flag is part of the target gate and suppresses
 automatic sending. The current bridge reports it as constant `false`, so that
 suppression is not a live-verified capability yet. The state gate is:
@@ -33,6 +34,7 @@ suppression is not a live-verified capability yet. The state gate is:
 | --- | --- | --- |
 | idle | send | send |
 | working | defer | send |
+| interrupted | send | send |
 | waiting_for_input | send | send |
 | stopping | defer | defer |
 | stopped | send | send |
@@ -86,6 +88,7 @@ The implemented timer contract is:
 ```text
 absent -> configured -> enabled -> due -> claimed
 claimed -> send_pending -> sent -> completed
+send_pending -> unknown_delivery (uncertain transport)
 claimed -> deferred_while_working -> send_pending
 claimed -> failed | expired | session_missing
 enabled -> disabled

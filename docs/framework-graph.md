@@ -30,7 +30,8 @@ The graph is intentionally split into three evidence classes:
 - **Implemented baseline**: event normalization, hook-kind routing, status
   gating, idempotency, JSON persistence, outbox recovery, external Stop
   output, one-shot/recurring timer delivery, subagent create/list/stop,
-  LongHorizon registration/control, Stopless goal review, operator-slot query,
+  LongHorizon registration/control, first liveness scheduling, Stopless goal
+  review, operator-slot query,
   and exact delivery evidence progression.
 - **Boundary only**: update-goal mutation, memory, native Stop continuation,
   tool-call policy, and request/schema injection. Their ownership boundaries
@@ -64,6 +65,7 @@ flowchart TD
   M -->|manual input active (target only)| O[deferred; persist pending]
   M -->|working + idle_only| O[deferred; persist pending]
   M -->|working + working_allowed| N
+  M -->|interrupted| N
   M -->|stopping| O
   O --> P[status watcher or later legal trigger]
   P --> M
@@ -92,7 +94,7 @@ flowchart TD
 | Daemon → codexapp | RouteCodex lifecycle | typed app-server target → capabilities | `connecting → capable` | namespace/appserver mismatch or unsupported capability |
 | Official event → adapter | hook adapter | stdin JSON → validated event | `received → classified` | malformed/unknown event; no daemon mutation |
 | Adapter → daemon | daemon RPC | event + optional intent → decision | event key recorded exactly once | duplicate returns recorded result |
-| Daemon → status | codexapp | target → nine states + orthogonal `input_active` | observation only | unknown/disconnected/failed is fail closed; active input deferral is a target contract because the current bridge reports `false` |
+| Daemon → status | codexapp | target → ten states + orthogonal `input_active` | observation only | unknown/disconnected/failed is fail closed; active input deferral is a target contract because the current bridge reports `false` |
 | Status → send gate | daemon | intent mode + state → send/defer/fail | `created → deferred` or send path | working + `idle_only` never calls send |
 | Daemon → sendmessage | codexapp | target + body + attempt id → native receipt | `emitted → sending → accepted` | exact native error, no silent retry |
 | Stop send → hook result | Stop adapter | accepted send → ordinary official success JSON | current hook ends | `{}`; never claim native continuation |
@@ -108,6 +110,7 @@ flowchart TD
 | --- | --- | --- |
 | `idle` | send | send |
 | `working` | defer, do not call `sendmessage` | send |
+| `interrupted` | send | send |
 | `waiting_for_input` | send | send |
 | `stopping` | defer until a legal idle observation | defer until a legal idle observation |
 | `stopped` | send | send |
@@ -159,12 +162,12 @@ idempotency, and an observe-only decision:
 | `PreCompact` | `input` | observe before compaction |
 | `PostCompact` | `input` | observe and reconcile |
 | `SubagentStop` | `stop` | observe official stop boundary |
-| `Stop` | `stop` | observe; eligible goal review is disabled until LongHorizon activation |
+| `Stop` | `stop` | observe; eligible goal review is enabled by LongHorizon goal registration |
 | `Interrupt` | `lifecycle` | record interruption and reconcile |
 | `SessionEnd` | `lifecycle` | flush durable state and close session |
 
-The baseline has no enabled policy factory until a LongHorizon record is
-activated. Supplying an intent explicitly in a contract test exercises the
+The baseline has no enabled policy factory until a LongHorizon goal record is
+registered. Supplying an intent explicitly in a contract test exercises the
 daemon transport path; it does not enable a product operator.
 
 ## Complete operator graph
@@ -184,7 +187,7 @@ flowchart LR
   M --> D
   D --> Q{running-aware gate}
   Q -->|working + idle_only| P[deferred/pending]
-  Q -->|idle/waiting/stopped| C[CodexApp.sendmessage]
+  Q -->|idle/interrupted/waiting/stopped| C[CodexApp.sendmessage]
   Q -->|working + working_allowed| C
   Q -->|unknown/disconnected/failed| F[explicit failure]
   P -->|legal status transition| Q

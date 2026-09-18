@@ -21,11 +21,13 @@ target to continue executing the goal.
 
 The App Server `turn/steer` operation is only valid for a live active turn.
 LongHorizon liveness is not a same-turn correction: native `active` and
-`running` targets normalize to `working` and are skipped, while native `idle`,
-`interrupted`/`cancelled`, and `notLoaded` targets normalize to send-eligible
-states and receive a `thread/queue/add` wake. `notLoaded` is resumed before the
-queue add. When a queued submission remains pending after the add, CodexApp
-starts it explicitly with `thread/queue/start`. The liveness path never steers.
+`running` targets with a unique `inProgress` turn normalize to `working` and
+are skipped. Native `active` without an `inProgress` turn is not running and
+normalizes to send-eligible `idle`; native `idle`, `interrupted`/`cancelled`,
+and `notLoaded` also normalize to send-eligible states and receive a
+`thread/queue/add` wake. `notLoaded` is resumed before the queue add. When a
+queued submission remains pending after the add, CodexApp starts it explicitly
+with `thread/queue/start`. The liveness path never steers.
 If `thread/resume` is blocked by an existing active writer, CodexApp reports a
 definitive `native_thread_busy` result. The occurrence remains deferred and is
 retried on a later liveness tick; it is not classified as uncertain delivery.
@@ -46,12 +48,14 @@ flowchart TD
   C --> D["timer occurrence due"]
   D --> E["read native App Server thread status"]
   E --> E1["active / running"]
+  E1 --> E1a{"unique inProgress turn?"}
+  E1a -->|yes| F["normalize working: skip this occurrence; recheck next interval"]
+  E1a -->|no| G1["normalize idle: emit queue MessageIntent"]
   E --> E2["idle"]
   E --> E3["interrupted / cancelled"]
   E --> E4["starting / stopping"]
   E --> E5["systemError / disconnected / failed / unknown"]
   E --> E6["notLoaded"]
-  E1 --> F["normalize working: skip this occurrence; recheck next interval"]
   E2 --> G["normalize idle: emit queue MessageIntent"]
   E3 --> G2["normalize interrupted: emit queue MessageIntent"]
   E6 --> G3["normalize idle: resume thread, then emit queue MessageIntent"]
@@ -61,6 +65,7 @@ flowchart TD
   G --> H["body names goal file and continue instruction"]
   G2 --> H
   G3 --> H
+  G1 --> H
   E4 --> H1["persist deferred occurrence"]
   E5 --> I["fail closed this occurrence; recheck next interval"]
   E -->|missing| I2["fail closed and terminate schedule"]
@@ -89,7 +94,8 @@ flowchart TD
 | Active → liveness schedule | `policy.longhorizon` | activation timestamp | recurring schedule due in 60s, interval 60s | schedule persistence error |
 | Active → startup reconcile | `policy.longhorizon` | active goal records + schedules | missing or terminal liveness schedule rebuilt; next check due in 60s | missing goal file or session binding |
 | Due → native status observation | `policy.timer` → `codexapp` | target identity | native thread state | status error maps to explicit failure |
-| Active/running → working | `codexapp` | native `active` or `running` | normalized `working` | native state is not treated as a direct policy state |
+| Active/running with a unique `inProgress` turn → working | `codexapp` | native `active` or `running` plus one active turn | normalized `working` | native thread state alone is not treated as running evidence |
+| Active without a running turn → idle | `codexapp` | native `active` plus zero `inProgress` turns | normalized send-eligible `idle` | native thread state alone must not suppress the wake |
 | Idle/interrupted/cancelled → eligible | `codexapp` | native `idle`, `interrupted`, or `cancelled` | normalized send-eligible state | native state is not treated as a direct policy state |
 | Not loaded → resume + idle | `codexapp` | native `notLoaded` | `thread/resume`, then normalized `idle` | no queue add before resume |
 | Resume → active writer deferred | `codexapp` → `hooksd` | `thread/resume` returns active writer | definitive `native_thread_busy`; occurrence stays deferred | no `unknown_delivery`, queue add, or steer |
@@ -115,8 +121,10 @@ flowchart TD
 2. The first liveness check is scheduled 60 seconds after activation.
 2a. Daemon startup reconciles every active goal that has no live liveness
     schedule and schedules its next check 60 seconds from reconciliation.
-3. App Server `active` and `running` normalize to `working`; liveness skips the
-   current occurrence and checks again at the next interval without steering.
+3. App Server `active` and `running` with a unique `inProgress` turn normalize
+   to `working`; liveness skips the current occurrence and checks again at the
+   next interval without steering. An `active` thread without an `inProgress`
+   turn normalizes to send-eligible `idle`.
 4. App Server `idle`, `interrupted`, and `cancelled` normalize to send-eligible
    states; idle and interrupted receive a queue wake. Liveness never steers.
 5. App Server `starting` and `stopping` normalize to deferred states.
@@ -148,6 +156,7 @@ flowchart TD
 | Startup reconciliation | `test/longhorizon-liveness.test.js`: reconciles active goals with missing or terminal schedules |
 | Idle queue wake | `test/longhorizon-liveness.test.js`: wakes an idle target through queue |
 | Working/active/running skip | `test/longhorizon-liveness.test.js`: skips a working target without queueing and keeps probing until idle |
+| Active without a running turn | `test/codexapp-entry.test.js`: treats active without a running turn as wake-eligible idle; applies every native status through the native bridge |
 | Idle/interrupted queue wake | `test/longhorizon-liveness.test.js`: wakes an idle and interrupted target through queue; applies the active idle interrupted state matrix through queue wake |
 | Native status normalization | `test/codexapp-entry.test.js`: maps every native thread status through the control socket |
 | Not loaded resume and interrupted queue start | `test/codexapp-entry.test.js`: applies every native status through the native bridge |

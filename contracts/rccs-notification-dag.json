@@ -38,6 +38,7 @@
   "edges": [
     { "from": "control_mutation", "to": "longhorizon_goal_active", "event": "register_goal" },
     { "from": "longhorizon_goal_active", "to": "liveness_scheduled", "event": "schedule_first_probe" },
+    { "from": "control_mutation", "to": "liveness_scheduled", "event": "reconcile_active_goal_schedule" },
     { "from": "control_mutation", "to": "schedule_persisted", "event": "register_schedule" },
     { "from": "liveness_scheduled", "to": "timer_due", "event": "clock_due" },
     { "from": "schedule_persisted", "to": "timer_due", "event": "clock_due" },
@@ -82,6 +83,7 @@
   "implementation_bindings": [
     { "node": "longhorizon_goal_active", "symbol": "registerLongHorizon", "resources": ["longhorizon_state", "schedule_state"] },
     { "node": "liveness_scheduled", "symbol": "upsertSchedule", "resources": ["schedule_state"] },
+    { "node": "liveness_scheduled", "symbol": "reconcileLongHorizon", "resources": ["longhorizon_state", "schedule_state"] },
     { "node": "timer_due", "symbol": "tick", "resources": ["schedule_state", "session_status"] },
     { "node": "queue_intent", "symbol": "dispatchNotify", "resources": ["message_intent"] },
     { "node": "native_accepted", "symbol": "send", "resources": ["delivery_receipt"] },
@@ -91,6 +93,7 @@
   "invariants": [
     "registering a LongHorizon goal record activates it by default",
     "the first liveness check is scheduled 60 seconds after activation",
+    "startup reconciles every active goal that has no live liveness schedule and schedules its next check 60 seconds from reconciliation",
     "working or active targets skip the current occurrence and are checked again at the next interval",
     "appserver active and running normalize to working and are skipped without steering or queueing",
     "interrupted and idle targets receive a queue wake, never steer",
@@ -124,6 +127,7 @@
   ],
   "evidence": [
     { "event": "register_goal", "test": "test/longhorizon-liveness.test.js", "case": "longhorizon liveness waits 60 seconds before the first wake" },
+    { "event": "reconcile_active_goal_schedule", "test": "test/longhorizon-liveness.test.js", "case": "longhorizon liveness reconciles active goals with missing or terminal schedules" },
     { "event": "clock_due", "test": "test/longhorizon-liveness.test.js", "case": "longhorizon liveness wakes an idle target through queue" },
     { "event": "native_active_or_running", "test": "test/codexapp-entry.test.js", "case": "longhorizon liveness DAG applies every native status through the native bridge" },
     { "event": "native_interrupted_or_cancelled", "test": "test/codexapp-entry.test.js", "case": "longhorizon liveness DAG applies every native status through the native bridge" },

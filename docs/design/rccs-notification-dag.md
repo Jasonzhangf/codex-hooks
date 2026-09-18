@@ -12,6 +12,8 @@ The executable owners are [`src/control.js`](../../src/control.js),
 
 Registering a LongHorizon goal record activates it immediately. The control
 plane creates a recurring liveness schedule due 60 seconds after activation.
+On daemon startup, every active goal without a live liveness schedule is
+reconciled and receives a recurring schedule due 60 seconds from startup.
 The schedule uses `idle_only`, `busy_policy=skip`, source `longhorizon`, and a
 60-second interval. A busy occurrence is skipped without creating a backlog;
 the next interval checks again. The wake body names the goal file and tells the
@@ -34,6 +36,8 @@ reconciliation and is never blindly retried with the same attempt identity.
 flowchart TD
   A["register LongHorizon goal"] --> B["active by default"]
   B --> C["schedule recurring liveness at activated_at + 60s, every 60s"]
+  B --> C2["startup reconcile active goals with missing/terminal schedule"]
+  C2 --> C
   C --> D["timer occurrence due"]
   D --> E["read native App Server thread status"]
   E --> E1["active / running"]
@@ -67,6 +71,7 @@ flowchart TD
 | --- | --- | --- | --- | --- |
 | Register goal → active | `policy.longhorizon` | goal id, goal file, session alias | active record with `activated_at` | missing goal file or session binding |
 | Active → liveness schedule | `policy.longhorizon` | activation timestamp | recurring schedule due in 60s, interval 60s | schedule persistence error |
+| Active → startup reconcile | `policy.longhorizon` | active goal records + schedules | missing or terminal liveness schedule rebuilt; next check due in 60s | missing goal file or session binding |
 | Due → native status observation | `policy.timer` → `codexapp` | target identity | native thread state | status error maps to explicit failure |
 | Active/running → working | `codexapp` | native `active` or `running` | normalized `working` | native state is not treated as a direct policy state |
 | Idle/interrupted/cancelled → eligible | `codexapp` | native `idle`, `interrupted`, or `cancelled` | normalized send-eligible state | native state is not treated as a direct policy state |
@@ -88,6 +93,8 @@ flowchart TD
 
 1. A newly registered LongHorizon goal is active by default.
 2. The first liveness check is scheduled 60 seconds after activation.
+2a. Daemon startup reconciles every active goal that has no live liveness
+    schedule and schedules its next check 60 seconds from reconciliation.
 3. App Server `active` and `running` normalize to `working`; liveness skips the
    current occurrence and checks again at the next interval without steering.
 4. App Server `idle`, `interrupted`, and `cancelled` normalize to send-eligible
@@ -111,6 +118,7 @@ flowchart TD
 | Contract edge | Executable evidence |
 | --- | --- |
 | First liveness check | `test/longhorizon-liveness.test.js`: waits 60 seconds before the first wake |
+| Startup reconciliation | `test/longhorizon-liveness.test.js`: reconciles active goals with missing or terminal schedules |
 | Idle queue wake | `test/longhorizon-liveness.test.js`: wakes an idle target through queue |
 | Working/active/running skip | `test/longhorizon-liveness.test.js`: skips a working target without queueing and keeps probing until idle |
 | Idle/interrupted queue wake | `test/longhorizon-liveness.test.js`: wakes an idle and interrupted target through queue; applies the active idle interrupted state matrix through queue wake |

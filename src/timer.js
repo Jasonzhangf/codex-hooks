@@ -42,6 +42,10 @@ const TERMINAL_SCHEDULE_STATES = new Set(["cancelled", "stopped", "disabled", "f
 const OCCURRENCE_TERMINAL_STATES = new Set(["sent", "completed", "unknown_delivery", "failed", "skipped", "session_missing"]);
 const SESSION_MISSING_CODES = new Set(["session_not_found", "target_scope_not_found"]);
 
+export function isTimerTerminalSchedule(schedule) {
+  return TERMINAL_SCHEDULE_STATES.has(schedule?.state);
+}
+
 export class TimerOperator {
   constructor({ store, dispatch, resume = null, createSubagent = null, registerSubagent = null, sessionStatus = null, clock = new SystemClock() }) {
     if (!store || typeof store.getControl !== "function" || typeof store.putControl !== "function") {
@@ -64,7 +68,7 @@ export class TimerOperator {
     const schedules = this.store.getControl("schedules") || {};
     const results = [];
     for (const schedule of Object.values(schedules).sort((left, right) => left.id.localeCompare(right.id))) {
-      if (schedule.enabled === false || TERMINAL_SCHEDULE_STATES.has(schedule.state)) continue;
+      if (schedule.enabled === false || isTimerTerminalSchedule(schedule)) continue;
       const occurrence = this.claimOccurrence(schedule);
       if (!occurrence) continue;
       const { at, occurrenceId } = occurrence;

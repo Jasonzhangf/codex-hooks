@@ -272,6 +272,99 @@ test("longhorizon liveness restart does not duplicate a terminal occurrence", as
   }
 });
 
+test("longhorizon liveness reconciles active goals with missing or terminal schedules", async () => {
+  const store = new MemoryStateStore();
+  let now = "2026-09-18T14:00:00.000Z";
+  const control = new FrameworkControlPlane({ store, now: () => now });
+  control.mutate({ operation: "session.bind", alias: "goal-session", target: TARGET });
+  const missing = control.mutate({
+    operation: "longhorizon.register",
+    id: "missing-schedule",
+    mode: "goal",
+    goal_file: "/tmp/missing.md",
+    session: "goal-session",
+  });
+  const terminal = control.mutate({
+    operation: "longhorizon.register",
+    id: "terminal-schedule",
+    mode: "goal",
+    goal_file: "/tmp/terminal.md",
+    session: "goal-session",
+  });
+  const stopped = control.mutate({
+    operation: "longhorizon.register",
+    id: "stopped-schedule",
+    mode: "goal",
+    goal_file: "/tmp/stopped.md",
+    session: "goal-session",
+  });
+  control.mutate({ operation: "longhorizon.stop", id: stopped.id });
+
+  const records = store.getControl("longhorizon");
+  delete records[missing.id].liveness_schedule_id;
+  delete records[missing.id].liveness_check_due_at;
+  delete records[missing.id].liveness_state;
+  const schedules = store.getControl("schedules");
+  delete schedules[missing.liveness_schedule_id];
+  for (const state of ["stopped", "disabled", "failed", "sent", "completed", "unknown_delivery", "skipped", "session_missing"]) {
+    const id = state === "stopped" ? terminal.id : `${terminal.id}-${state}`;
+    const livenessScheduleId = state === "stopped"
+      ? terminal.liveness_schedule_id
+      : `longhorizon-liveness:${id}`;
+    records[id] = {
+      ...records[terminal.id],
+      id,
+      liveness_schedule_id: livenessScheduleId,
+    };
+    schedules[livenessScheduleId] = {
+      ...schedules[terminal.liveness_schedule_id],
+      id: livenessScheduleId,
+      state,
+      enabled: false,
+    };
+  }
+  schedules[terminal.liveness_schedule_id] = {
+    ...schedules[terminal.liveness_schedule_id],
+    state: "stopped",
+    enabled: false,
+  };
+  store.putControl("longhorizon", records);
+  store.putControl("schedules", schedules);
+
+  now = "2026-09-18T15:00:00.000Z";
+  const reconciled = control.reconcileLongHorizon();
+  assert.deepEqual(
+    reconciled.map((entry) => entry.id).sort(),
+    [missing.id, terminal.id, ...["disabled", "failed", "sent", "completed", "unknown_delivery", "skipped", "session_missing"].map((state) => `${terminal.id}-${state}`)].sort(),
+  );
+  const nextRecords = store.getControl("longhorizon");
+  const nextSchedules = store.getControl("schedules");
+  for (const id of [missing.id, terminal.id, ...["disabled", "failed", "sent", "completed", "unknown_delivery", "skipped", "session_missing"].map((state) => `${terminal.id}-${state}`)]) {
+    const record = nextRecords[id];
+    const schedule = nextSchedules[record.liveness_schedule_id];
+    assert.equal(
+      record.liveness_schedule_id.startsWith(`longhorizon-liveness:${id}`),
+      true,
+    );
+    assert.equal(record.liveness_state, "scheduled");
+    assert.equal(record.liveness_check_due_at, "2026-09-18T15:01:00.000Z");
+    assert.equal(schedule.state, "configured");
+    assert.equal(schedule.enabled, true);
+    assert.equal(schedule.mode, "interval");
+    assert.equal(schedule.interval_ms, 60_000);
+    assert.equal(schedule.source, "longhorizon");
+  }
+  assert.equal(nextRecords[stopped.id].enabled, false);
+  assert.equal(nextRecords[stopped.id].state, "stopped");
+  const before = nextRecords[terminal.id].liveness_schedule_id;
+  const second = control.reconcileLongHorizon();
+  assert.deepEqual(
+    second.map((entry) => entry.id).sort(),
+    [missing.id, terminal.id, ...["disabled", "failed", "sent", "completed", "unknown_delivery", "skipped", "session_missing"].map((state) => `${terminal.id}-${state}`)].sort(),
+  );
+  assert.equal(store.getControl("longhorizon")[terminal.id].liveness_schedule_id, before);
+});
+
 test("longhorizon liveness accepted evidence is not promoted to executed without matching receipt", async () => {
   const { codexapp, daemon, timer } = setup({ state: "idle" });
   timer.clock.advance(60_000);

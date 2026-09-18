@@ -79,6 +79,28 @@ test("rccs-recover rejects a tampered snapshot before changing live files", asyn
   }
 });
 
+test("rccs-recover rejects a snapshot path outside the backup root", async () => {
+  const home = await mkdtemp(join(tmpdir(), "rccs-recover-path-"));
+  const external = await mkdtemp(join(tmpdir(), "rccs-recover-external-"));
+  try {
+    const fixture = await createFixture(home);
+    await cp(join(fixture.rccHome, "config.toml"), join(external, "config.toml"));
+    await mkdir(join(external, "bin"), { recursive: true });
+    await writeFile(join(external, "bin", "rccv3"), "external\n");
+    await chmod(join(external, "bin", "rccv3"), 0o755);
+    await writeFile(join(external, "metadata"), "id=external\n");
+    await writeFile(join(external, "manifest.sha256"), "");
+
+    const result = await run("/bin/sh", [script, "restore", external], { HOME: home });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /invalid snapshot id/);
+    assert.equal(await readFile(join(fixture.rccHome, "config.toml"), "utf8"), "config-v1\n");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(external, { recursive: true, force: true });
+  }
+});
+
 test("rccs-recover rejects a snapshot whose config check fails", async () => {
   const home = await mkdtemp(join(tmpdir(), "rccs-recover-check-"));
   try {

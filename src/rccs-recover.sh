@@ -62,10 +62,7 @@ hash_tree() {
 }
 
 snapshot_dir() {
-  case $1 in
-    /*) printf '%s\n' "$1" ;;
-    *) printf '%s/%s\n' "$BACKUP_ROOT" "$1" ;;
-  esac
+  printf '%s/%s\n' "$BACKUP_ROOT" "$1"
 }
 
 latest_snapshot() {
@@ -80,6 +77,9 @@ resolve_snapshot() {
   if [ "$id" = latest ]; then
     id=$(latest_snapshot)
   fi
+  case $id in
+    */*|.|..|'') fail "invalid snapshot id: $id" ;;
+  esac
   directory=$(snapshot_dir "$id")
   [ -f "$directory/manifest.sha256" ] || fail "snapshot not found: $id"
   [ -f "$directory/metadata" ] || fail "snapshot metadata missing: $id"

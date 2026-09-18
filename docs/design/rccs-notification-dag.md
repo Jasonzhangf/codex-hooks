@@ -78,6 +78,7 @@ flowchart TD
   P --> Q["reconcile by attempt identity"]
   Q -->|matching receipt| L
   Q -->|no matching receipt| P
+  P -->|later recurring occurrence| D
 ```
 
 ## Edge contract
@@ -136,7 +137,8 @@ flowchart TD
 13. Accepted, queued, delivered, executed, replied, and read are distinct
    evidence states.
 14. An uncertain delivery is reconciled by the same attempt identity and is
-   never blindly retried.
+   never blindly retried. A later recurring occurrence still continues probing;
+   an unresolved old attempt must not permanently disable the liveness schedule.
 
 ## Evidence mapping
 

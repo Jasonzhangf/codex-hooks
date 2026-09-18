@@ -130,7 +130,8 @@
     "unknown, disconnected, and failed targets fail closed for the current occurrence and are checked again",
     "missing and dead targets fail closed and terminate the liveness schedule",
     "accepted, queued, delivered, executed, replied, and read are distinct evidence states",
-    "uncertain delivery enters reconciliation and is never blindly retried"
+    "uncertain delivery enters reconciliation and the same attempt is never blindly retried",
+    "a later recurring occurrence continues probing after an unresolved uncertain attempt"
   ],
   "required_evidence_events": [
     "register_goal",

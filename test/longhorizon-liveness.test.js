@@ -427,14 +427,54 @@ test("longhorizon liveness uncertain delivery reconciles without blind retry", a
   assert.deepEqual(await timer.tick(), []);
   assert.equal(codexapp.sends.length, 0);
   timer.clock.advance(60_000);
-  assert.deepEqual(await timer.tick(), []);
-  assert.equal(codexapp.sends.length, 0);
-  const intentId = fired[0].result.delivery.intent_id;
-  const delivered = await daemon.reconcileDeliveryEvidence(intentId);
-  assert.equal(delivered.state, "delivered");
-  timer.clock.advance(60_000);
   const next = await timer.tick();
   assert.equal(next[0].result.decision, "sent");
+  assert.equal(codexapp.sends.length, 1);
+});
+
+test("longhorizon liveness retries only the next occurrence after unreconciled unknown delivery", async () => {
+  const sendError = Object.assign(new Error("transport timeout"), { code: "transport_timeout" });
+  const { codexapp, timer, store, registered } = setup({ state: "idle", sendError });
+  timer.clock.advance(60_000);
+  const first = await timer.tick();
+  assert.equal(first[0].result.decision, "unknown_delivery");
+  const firstOccurrence = first[0].occurrence_id;
+  const schedule = store.getControl("schedules")[registered.liveness_schedule_id];
+  assert.equal(schedule.last_decision, "unknown_delivery");
+  assert.equal(schedule.last_delivery.state, "unknown_delivery");
+  assert.equal(schedule.next_at, "2026-09-18T12:02:00.000Z");
+
+  assert.deepEqual(await timer.tick(), []);
+  assert.equal(codexapp.sends.length, 0);
+
+  timer.clock.advance(60_000);
+  const second = await timer.tick();
+  assert.equal(second[0].result.decision, "sent");
+  assert.notEqual(second[0].occurrence_id, firstOccurrence);
+  assert.equal(codexapp.sends.length, 1);
+  assert.equal(
+    store.getControl("schedules")[registered.liveness_schedule_id].last_decision,
+    "sent",
+  );
+});
+
+test("longhorizon liveness fails closed when unresolved delivery identity is missing", async () => {
+  const { codexapp, timer, store, registered } = setup({ state: "idle" });
+  timer.clock.advance(60_000);
+  await timer.tick();
+  const schedules = store.getControl("schedules");
+  const currentOccurrence = schedules[registered.liveness_schedule_id].current_occurrence;
+  schedules[registered.liveness_schedule_id] = {
+    ...schedules[registered.liveness_schedule_id],
+    state: "enabled",
+    next_at: currentOccurrence.slice("timer:".length + registered.liveness_schedule_id.length + 1),
+    last_decision: "unknown_delivery",
+    last_delivery: { state: "unknown_delivery" },
+  };
+  store.putControl("schedules", schedules);
+
+  timer.clock.advance(60_000);
+  assert.deepEqual(await timer.tick(), []);
   assert.equal(codexapp.sends.length, 1);
 });
 

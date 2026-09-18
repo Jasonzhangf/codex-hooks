@@ -687,7 +687,7 @@ options:
   --every <duration>              periodic interval such as 5m or 1h
   --at <ISO-8601>                 optional first periodic occurrence
   --owner-session <session-id>    ownership scope for list/control
-  --review-budget <count>         optional goal review budget; default 1
+  --review-budget <count>         optional goal review budget; default unlimited
 
 notes:
   Records are registered paused and require explicit activation.

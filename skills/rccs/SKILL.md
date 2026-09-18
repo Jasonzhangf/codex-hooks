@@ -244,13 +244,19 @@ rccs longhorizon stop review
 | `--every <duration>` | none | Periodic interval in `ms`, `s`, `m`, `h`, or `d`. |
 | `--at <ISO-8601>` | current time | First occurrence for periodic mode. |
 | `--owner-session <session-id>` | current session when available | Ownership scope for list and control. |
-| `--review-budget <count>` | `1` for goal mode | Maximum reviewer count recorded for the goal record. |
+| `--review-budget <count>` | unlimited | Optional cap on reviewer count. Omit it to review every eligible Stop. |
 
 `periodic` mode owns a paused recurring schedule with `busy_policy=skip`.
 `goal` mode enables Stopless goal review: an eligible Stop event creates one
-isolated ephemeral reviewer, validates its structured report, and sends one
-feedback intent only when a gap and next action are present. User interrupts
-and `stop_hook_active` suppress review. Reviewer/network/schema failures are
+isolated ephemeral reviewer, validates its structured report, and decides from
+functional completion, architecture compliance, and any claimed blocker.
+Functional incompletion or an architecture P0/P1 finding produces one feedback
+intent. A non-compliant or uncertain architecture status also produces
+feedback; only a compliant architecture with P2-only findings is non-blocking.
+A claimed blocker passes only when the reason is reasonable, currently
+unsolvable, and the expected attempts were made and recorded; otherwise the
+reviewer returns the missing attempt or next action. User interrupts and
+`stop_hook_active` suppress review. Reviewer/network/schema failures are
 recorded as unresolved or failed and do not block the original Stop.
 
 The current CLI supports `register`, `list`, `show`, `activate`, `pause`,

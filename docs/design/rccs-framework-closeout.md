@@ -494,11 +494,18 @@ Goal review is a Stop-triggered, isolated review:
 4. The policy reads the registered goal and current turn summary.
 5. If the reviewer is eligible, the daemon creates a fresh ephemeral
    subagent with a fixed reviewer prompt.
-6. The reviewer returns a structured report:
-   `goal`, `observed`, `gap`, `next_action`, `completion_claim`,
-   `evidence_refs`, `blocked_reason`.
-7. The daemon validates the report schema.
-8. If `gap` is non-empty, the delivery plane creates one feedback intent for
+6. The reviewer returns a structured report with:
+   `goal`, `observed`, `evidence_refs`;
+   `functional` status (`complete`, `incomplete`, `blocked`) plus gap and next
+   action;
+   `architecture` status plus P0/P1/P2 findings;
+   `blocked_review` when the source agent claims a blocker.
+7. The daemon validates the report schema and applies one decision:
+   functional incompletion, any non-compliant or uncertain architecture status,
+   a P0/P1 architecture finding, or an invalid blocker requires feedback.
+   A compliant architecture with only P2 findings and a reasonable, currently
+   unsolvable, sufficiently evidenced blocker pass.
+8. If feedback is required, the delivery plane creates one feedback intent for
    the original session.
 9. If the reviewer fails, times out, or the request cannot be completed, the
    original Stop remains successful and the review is recorded as
@@ -506,7 +513,8 @@ Goal review is a Stop-triggered, isolated review:
 
 The reviewer subagent does not inherit the caller context. A reviewer's own
 Stop event cannot spawn another reviewer. The policy allows at most one review
-per source turn and obeys `review_budget`.
+per source turn. `review_budget` is optional; when omitted, every eligible Stop
+is reviewed.
 
 ### 11.4 LongHorizon periodic mode
 

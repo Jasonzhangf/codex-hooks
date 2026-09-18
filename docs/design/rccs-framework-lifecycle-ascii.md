@@ -242,14 +242,14 @@ STOPLESS / LONGHORIZON GOAL REVIEW
                  v
   +-----------------------------+
   | fixed reviewer prompt       |
-  | goal / observed / gap       |
-  | next_action / evidence      |
-  | completion_claim / blocked  |
+  | goal / observed / evidence  |
+  | functional + architecture   |
+  | blocked_review when blocked |
   +--------------+--------------+
                  |
                  +---- failure/timeout ----> unresolved, non-blocking
                  |
-                 | valid gap
+                 | incomplete / blocked / architecture issue
                  v
   +-----------------------------+
   | delivery plane feedback     |

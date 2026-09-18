@@ -946,13 +946,18 @@ Precondition: one ordinary Stop event with a registered goal and no user
 interrupt; a separate user-interrupt Stop event.
 
 Expected state: ordinary Stop creates one isolated reviewer; user interrupt
-creates none; reviewer output with a gap creates one feedback intent; no
-reviewer is created on `stop_hook_active=true`.
+creates none; functional incompletion, architecture P0/P1, or an invalid
+blocker creates one feedback intent; non-compliant or uncertain architecture
+also creates feedback; a complete review, compliant P2-only architecture
+finding, or reasonable unsolvable blocker with recorded attempts passes; no
+reviewer is created on `stop_hook_active=true`; pending reviewer reads are
+polled until completion within the default five-minute wait.
 
 Evidence: `artifacts/rccs-closeout/G2/reviewer-events.jsonl`.
 
 Failure criteria: context inheritance, reviewer loop, user-interrupt review,
-or feedback without a validated gap.
+feedback for P2-only findings, feedback after a legitimate blocked result, or
+acceptance of an invalid blocker.
 
 ### G3. Reviewer failure is non-blocking
 

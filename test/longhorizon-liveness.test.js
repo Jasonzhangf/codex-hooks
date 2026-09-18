@@ -98,16 +98,21 @@ test("longhorizon liveness wakes an idle target through queue", async () => {
   assert.equal(codexapp.sends.length, 1);
   assert.equal(intents[0].source, "longhorizon");
   assert.equal(intents[0].operation, "queue");
+  assert.match(intents[0].body, /\/tmp\/goal\.md/);
+  assert.match(intents[0].body, /continue executing the goal/);
+  assert.equal(codexapp.steers.length, 0);
   assert.equal(Object.hasOwn(intents[0], "turn_id"), false);
   assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "sent");
 });
 
 test("longhorizon liveness skips a working target without queueing", async () => {
-  const { codexapp, timer, store, registered } = setup({ state: "working" });
+  const { codexapp, timer, intents, store, registered } = setup({ state: "working" });
   timer.clock.advance(60_000);
   const fired = await timer.tick();
   assert.equal(fired[0].result.decision, "skipped");
   assert.equal(codexapp.sends.length, 0);
+  assert.equal(codexapp.steers.length, 0);
+  assert.equal(intents.length, 0);
   assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "skipped");
   assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].enabled, false);
   assert.deepEqual(await timer.tick(), []);
@@ -121,7 +126,33 @@ test("longhorizon liveness wakes an interrupted target through queue", async () 
   assert.equal(codexapp.sends.length, 1);
   assert.equal(intents[0].source, "longhorizon");
   assert.equal(intents[0].operation, "queue");
+  assert.match(intents[0].body, /\/tmp\/goal\.md/);
+  assert.match(intents[0].body, /continue executing the goal/);
+  assert.equal(codexapp.steers.length, 0);
   assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "sent");
+});
+
+test("longhorizon liveness applies the active idle interrupted state matrix through queue wake", async () => {
+  const working = setup({ state: "working" });
+  working.timer.clock.advance(60_000);
+  const skipped = await working.timer.tick();
+  assert.equal(skipped[0].result.decision, "skipped");
+  assert.equal(working.codexapp.sends.length, 0);
+  assert.equal(working.codexapp.steers.length, 0);
+  assert.equal(working.intents.length, 0);
+
+  for (const state of ["idle", "interrupted"]) {
+    const target = setup({ state });
+    target.timer.clock.advance(60_000);
+    const fired = await target.timer.tick();
+    assert.equal(fired[0].result.decision, "sent");
+    assert.equal(target.codexapp.sends.length, 1);
+    assert.equal(target.codexapp.steers.length, 0);
+    assert.equal(target.intents.length, 1);
+    assert.equal(target.intents[0].operation, "queue");
+    assert.match(target.intents[0].body, /\/tmp\/goal\.md/);
+    assert.match(target.intents[0].body, /continue executing the goal/);
+  }
 });
 
 test("longhorizon liveness defers while starting or stopping and resumes on idle", async () => {

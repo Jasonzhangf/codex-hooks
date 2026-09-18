@@ -7,6 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
+import { CodexAppBridgePort } from "../src/codexapp-port.js";
+import { FrameworkControlPlane } from "../src/control.js";
+import { HooksDaemon, MemoryStateStore } from "../src/daemon.js";
+import { ManualClock, TimerOperator } from "../src/timer.js";
 
 test("internal codexapp initializes the native App Server before target reads and sends", async () => {
   const root = await mkdtemp(join(tmpdir(), "routecodex-codexapp-entry-"));
@@ -638,8 +642,9 @@ test("internal codexapp steers a live turn through turn/steer", async () => {
   }
 });
 
-test("internal codexapp maps live and interrupted native status through the control socket", async () => {
+test("internal codexapp maps native idle, active/running, and interrupted status through the control socket", async () => {
   for (const [nativeState, expectedState] of [
+    ["idle", "idle"],
     ["active", "working"],
     ["running", "working"],
     ["interrupted", "interrupted"],
@@ -678,6 +683,94 @@ test("internal codexapp maps live and interrupted native status through the cont
         calls.some(([method]) => method === "thread/turns/list"),
         expectedState === "working",
       );
+    } finally {
+      codexapp.kill("SIGTERM");
+      await once(codexapp, "exit");
+      await new Promise((resolve) => native.close(resolve));
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("longhorizon liveness DAG skips active and wakes idle or interrupted through the native bridge", async () => {
+  for (const [nativeState, expectedDecision] of [
+    ["active", "skipped"],
+    ["running", "skipped"],
+    ["idle", "sent"],
+    ["interrupted", "sent"],
+  ]) {
+    const root = await mkdtemp(join(tmpdir(), `routecodex-longhorizon-dag-${nativeState}-`));
+    const appserverSocket = join(root, "appserver.sock");
+    const controlSocket = join(root, "codexapp.sock");
+    const calls = [];
+    const native = await startNativeFixture(appserverSocket, calls, {
+      threadStatus: { type: nativeState },
+      turns: [{ id: "turn-live", status: "inProgress", items: [] }],
+    });
+    const codexapp = spawn(process.execPath, [
+      "src/codexapp-entry.js",
+      "--socket", controlSocket,
+      "--targets-file", join(root, "targets.json"),
+    ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+    try {
+      await readLine(codexapp.stdout);
+      await control(controlSocket, "register_target", {
+        scope_id: "local:test",
+        appserver_id: "test-appserver",
+        namespace: "codex_tui",
+        endpoint: `unix://${appserverSocket}`,
+      });
+
+      const store = new MemoryStateStore();
+      const codexappPort = new CodexAppBridgePort({
+        socket: controlSocket,
+        source: { scopeId: "local:hooks", sessionId: "hooksd" },
+        source_kind: "service",
+        target_scopes: { "codex_tui/test-appserver": "local:test" },
+      });
+      const daemon = new HooksDaemon({ codexapp: codexappPort, store });
+      const clock = new ManualClock("2026-09-18T12:00:00.000Z");
+      const controlPlane = new FrameworkControlPlane({ store, now: () => clock.now() });
+      const target = {
+        namespace: "codex_tui",
+        appserver_id: "test-appserver",
+        scope_id: "local:test",
+        session_id: "thread-1",
+        thread_id: "thread-1",
+      };
+      controlPlane.mutate({ operation: "session.bind", alias: "goal-session", target });
+      const registered = controlPlane.mutate({
+        operation: "longhorizon.register",
+        id: `goal-${nativeState}`,
+        mode: "goal",
+        goal_file: "/tmp/goal.md",
+        session: "goal-session",
+      });
+      const timer = new TimerOperator({
+        store,
+        clock,
+        dispatch: (intent) => daemon.dispatchIntent(intent, { kind: "longhorizon" }),
+        resume: (pendingTarget) => daemon.flushPending(pendingTarget),
+        sessionStatus: (pendingTarget) => daemon.sessionStatus(pendingTarget),
+      });
+
+      clock.advance(60_000);
+      const fired = await timer.tick();
+      assert.equal(fired[0].result.decision, expectedDecision);
+      assert.equal(
+        store.getControl("schedules")[registered.liveness_schedule_id].state,
+        expectedDecision,
+      );
+      assert.equal(calls.some(([method]) => method === "turn/steer"), false);
+      if (expectedDecision === "skipped") {
+        assert.equal(calls.some(([method]) => method === "thread/queue/add"), false);
+      } else {
+        const queued = calls.find(([method]) => method === "thread/queue/add");
+        assert.ok(queued, "idle or interrupted target must receive a queue wake");
+        assert.equal(queued[1].threadId, "thread-1");
+        assert.equal(queued[1].input[0].text.includes("/tmp/goal.md"), true);
+        assert.equal(queued[1].input[0].text.includes("continue executing the goal"), true);
+      }
     } finally {
       codexapp.kill("SIGTERM");
       await once(codexapp, "exit");

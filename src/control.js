@@ -473,7 +473,7 @@ export class FrameworkControlPlane {
         action: SCHEDULE_ACTIONS.NOTIFY,
         mode: SCHEDULE_MODES.ONCE,
         at: new Date(Date.parse(record.activated_at) + LONGHORIZON_LIVENESS_DELAY_MS).toISOString(),
-        body: `LongHorizon goal liveness check. Read ${record.goal_file}, continue the goal if the target is idle or interrupted, and do not duplicate work if it is already working.`,
+        body: `LongHorizon goal liveness check. Read ${record.goal_file} and continue executing the goal if the target is idle or interrupted. Do not duplicate work if it is already active or running.`,
         target,
         send_mode: SEND_MODES.IDLE_ONLY,
         busy_policy: BUSY_POLICIES.SKIP,

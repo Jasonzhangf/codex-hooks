@@ -642,13 +642,20 @@ test("internal codexapp steers a live turn through turn/steer", async () => {
   }
 });
 
-test("internal codexapp maps native idle, active/running, and interrupted status through the control socket", async () => {
+test("internal codexapp maps every native thread status through the control socket", async () => {
   for (const [nativeState, expectedState] of [
     ["idle", "idle"],
     ["active", "working"],
     ["running", "working"],
     ["interrupted", "interrupted"],
     ["cancelled", "interrupted"],
+    ["starting", "starting"],
+    ["stopping", "stopping"],
+    ["systemError", "failed"],
+    ["disconnected", "disconnected"],
+    ["failed", "failed"],
+    ["unknown", "unknown"],
+    ["notLoaded", "unknown"],
   ]) {
     const root = await mkdtemp(join(tmpdir(), `routecodex-codexapp-status-${nativeState}-`));
     const appserverSocket = join(root, "appserver.sock");
@@ -692,12 +699,20 @@ test("internal codexapp maps native idle, active/running, and interrupted status
   }
 });
 
-test("longhorizon liveness DAG skips active and wakes idle or interrupted through the native bridge", async () => {
-  for (const [nativeState, expectedDecision] of [
-    ["active", "skipped"],
-    ["running", "skipped"],
-    ["idle", "sent"],
-    ["interrupted", "sent"],
+test("longhorizon liveness DAG applies every native status through the native bridge", async () => {
+  for (const [nativeState, expectedDecision, expectedScheduleState] of [
+    ["active", "skipped", "skipped"],
+    ["running", "skipped", "skipped"],
+    ["idle", "sent", "sent"],
+    ["interrupted", "sent", "sent"],
+    ["cancelled", "sent", "sent"],
+    ["starting", "deferred", "deferred_while_working"],
+    ["stopping", "deferred", "deferred_while_working"],
+    ["systemError", "fail_closed", "failed"],
+    ["disconnected", "fail_closed", "failed"],
+    ["failed", "fail_closed", "failed"],
+    ["unknown", "fail_closed", "failed"],
+    ["notLoaded", "fail_closed", "failed"],
   ]) {
     const root = await mkdtemp(join(tmpdir(), `routecodex-longhorizon-dag-${nativeState}-`));
     const appserverSocket = join(root, "appserver.sock");
@@ -759,17 +774,17 @@ test("longhorizon liveness DAG skips active and wakes idle or interrupted throug
       assert.equal(fired[0].result.decision, expectedDecision);
       assert.equal(
         store.getControl("schedules")[registered.liveness_schedule_id].state,
-        expectedDecision,
+        expectedScheduleState,
       );
       assert.equal(calls.some(([method]) => method === "turn/steer"), false);
-      if (expectedDecision === "skipped") {
-        assert.equal(calls.some(([method]) => method === "thread/queue/add"), false);
-      } else {
+      if (expectedDecision === "sent") {
         const queued = calls.find(([method]) => method === "thread/queue/add");
         assert.ok(queued, "idle or interrupted target must receive a queue wake");
         assert.equal(queued[1].threadId, "thread-1");
         assert.equal(queued[1].input[0].text.includes("/tmp/goal.md"), true);
         assert.equal(queued[1].input[0].text.includes("continue executing the goal"), true);
+      } else {
+        assert.equal(calls.some(([method]) => method === "thread/queue/add"), false);
       }
     } finally {
       codexapp.kill("SIGTERM");

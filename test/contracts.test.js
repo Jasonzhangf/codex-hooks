@@ -213,6 +213,7 @@ test("notification liveness DAG binds every gate, resource, and evidence case", 
     assert.ok(evidenceSource.includes(`test(${JSON.stringify(evidence.case)},`), `evidence case not found: ${evidence.test} :: ${evidence.case}`);
   }
   for (const event of requiredEvents) {
+    assert.ok(eventNames.has(event), `required evidence event is not bound to a DAG edge: ${event}`);
     assert.ok(evidenceEvents.has(event), `required evidence event is missing: ${event}`);
   }
   assert.ok(dag.invariants.some((invariant) => invariant.includes("never steer")));

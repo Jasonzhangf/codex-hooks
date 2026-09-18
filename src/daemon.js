@@ -298,17 +298,31 @@ export class HooksDaemon {
     if (observation.input_active || !SEND_ELIGIBLE_STATES.includes(state)) return { state, input_active: observation.input_active, decision: "deferred", sent: [] };
 
     const sent = [];
+    const deferredResults = [];
     const failed = [];
     for (const intent of deferred) {
       try {
         const result = await this.resumePendingIntent(intent, state);
         if (result.decision === "sent") sent.push(clone(result.delivery));
+        else if (result.decision === "deferred") deferredResults.push(clone(result.delivery));
         else failed.push(clone(result.delivery));
       } catch (error) {
         failed.push({ intent_id: intent.intent_id, state: "failed", evidence: { state, code: error.code || "send_failed", message: error.message } });
       }
     }
-    return { state, sent, failed };
+    return {
+      state,
+      decision: deferredResults.length > 0
+        ? "deferred"
+        : sent.length > 0
+          ? "sent"
+          : failed.length > 0
+            ? "fail_closed"
+            : "sent",
+      sent,
+      deferred: deferredResults,
+      failed,
+    };
   }
 
   async resumePendingIntent(intent, state) {
@@ -454,6 +468,20 @@ export class HooksDaemon {
         : {};
       return this.result(event, hookKind, "sent", { delivery: delivered, hook_output: hookOutput });
     } catch (error) {
+      if (error.code === "native_thread_busy") {
+        const deferred = this.transition(sending, DELIVERY.DEFERRED, {
+          state,
+          code: error.code,
+          message: error.message,
+          attempt_id: attemptId,
+          at: this.now(),
+        });
+        this.rememberIntent(intent, deferred, "deferred");
+        return this.result(event, hookKind, "deferred", {
+          delivery: deferred,
+          error: { code: error.code, message: error.message },
+        });
+      }
       if (isUncertainTransportError(error)) {
         const unknown = this.transition(sending, "unknown_delivery", {
           state,

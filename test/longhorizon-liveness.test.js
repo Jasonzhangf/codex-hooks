@@ -161,6 +161,42 @@ test("longhorizon liveness wakes an interrupted target through queue", async () 
   assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].enabled, true);
 });
 
+test("longhorizon liveness defers an active-writer resume and retries after release", async () => {
+  const { codexapp, daemon, timer, store, registered } = setup({ state: "idle" });
+  let busyAttempts = 2;
+  codexapp.send_message = async (request) => {
+    if (busyAttempts > 0) {
+      busyAttempts -= 1;
+      throw Object.assign(new Error("thread thread-1 already has an active writer"), {
+        code: "native_thread_busy",
+      });
+    }
+    codexapp.sends.push(request);
+    return { accepted: true, attempt_id: request.attempt_id };
+  };
+
+  timer.clock.advance(60_000);
+  const first = await timer.tick();
+  assert.equal(first[0].result.decision, "deferred");
+  const schedule = store.getControl("schedules")[registered.liveness_schedule_id];
+  assert.equal(schedule.state, "deferred_while_working");
+  assert.equal(schedule.enabled, true);
+  const intentId = first[0].result.delivery.intent_id;
+  assert.equal(daemon.store.getIntent(intentId).decision, "deferred");
+  assert.equal(daemon.store.getIntent(intentId).state, "deferred");
+
+  const second = await timer.tick();
+  assert.equal(second[0].result.decision, "deferred");
+  assert.equal(second[0].result.deferred.length, 1);
+  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "deferred_while_working");
+
+  const third = await timer.tick();
+  assert.equal(third[0].result.decision, "sent");
+  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "enabled");
+  assert.equal(codexapp.sends.length, 1);
+  assert.equal(codexapp.steers.length, 0);
+});
+
 test("longhorizon liveness applies the active idle interrupted state matrix through queue wake", async () => {
   const working = setup({ state: "working" });
   working.timer.clock.advance(60_000);

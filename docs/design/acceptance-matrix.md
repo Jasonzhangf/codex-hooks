@@ -25,7 +25,7 @@ route reached native receipt/execution/reply/read evidence.
 | CodexApp typed port | `src/codexapp-port.js`, bridge contract tests | pass |
 | Internal `rccv3-codexapp` bin | `src/codexapp-entry.js`, `test/codexapp-entry.test.js`, `test/init.test.js` | pass |
 | Loaded-thread discovery via `thread/loaded/list` | `src/codexapp-entry.js` `list_threads`, `test/codexapp-entry.test.js` | pass |
-| LongHorizon `notLoaded` resume and pending queue start | `src/codexapp-entry.js` `send`, `test/codexapp-entry.test.js`, `contracts/rccs-notification-dag.json` | pass |
+| LongHorizon `notLoaded` resume, active-writer deferral, and pending queue start | `src/codexapp-entry.js` `send`, `test/codexapp-entry.test.js`, `test/longhorizon-liveness.test.js`, `contracts/rccs-notification-dag.json` | pass |
 | Managed supervisor uses installed bin | `src/install.js`, `src/supervisor-entry.js`, `test/supervisor-entry.test.js` | pass |
 | Native TUI send/receipt/execution/reply/read via internal bin | default TUI App Server trace, 2026-09-13 (`ADAPTER_LIVE_1789312075729` on thread `01a09b3f-ced2-70a1-9fc5-9d1124c9a8f0`) | pass-adapter |
 | Native TUI two-thread bidirectional delivery | default TUI App Server trace, 2026-09-13 (`A_TO_B_CROSS_1789310703_7b3d`, `B_TO_A_CROSS_1789310703_2e8c`) | pass-adapter |

@@ -11,10 +11,11 @@ The executable owners are [`src/control.js`](../../src/control.js),
 ## Scope
 
 Registering a LongHorizon goal record activates it immediately. The control
-plane creates one one-shot liveness schedule due 60 seconds after activation.
-The schedule uses `idle_only`, `busy_policy=skip`, and source `longhorizon`.
-The wake body names the goal file and tells the target to continue executing
-the goal.
+plane creates a recurring liveness schedule due 60 seconds after activation.
+The schedule uses `idle_only`, `busy_policy=skip`, source `longhorizon`, and a
+60-second interval. A busy occurrence is skipped without creating a backlog;
+the next interval checks again. The wake body names the goal file and tells the
+target to continue executing the goal.
 
 The App Server `turn/steer` operation is only valid for a live active turn.
 LongHorizon liveness is not a same-turn correction: native `active` and
@@ -32,7 +33,7 @@ reconciliation and is never blindly retried with the same attempt identity.
 ```mermaid
 flowchart TD
   A["register LongHorizon goal"] --> B["active by default"]
-  B --> C["schedule one-shot liveness at activated_at + 60s"]
+  B --> C["schedule recurring liveness at activated_at + 60s, every 60s"]
   C --> D["timer occurrence due"]
   D --> E["read native App Server thread status"]
   E --> E1["active / running"]
@@ -40,15 +41,14 @@ flowchart TD
   E --> E3["interrupted / cancelled"]
   E --> E4["starting / stopping"]
   E --> E5["systemError / disconnected / failed / unknown / notLoaded"]
-  E1 --> F["normalize working: skip without steering or queue backlog"]
+  E1 --> F["normalize working: skip this occurrence; recheck next interval"]
   E2 --> G["normalize idle: emit queue MessageIntent"]
   E3 --> G2["normalize interrupted: emit queue MessageIntent"]
   G --> H["body names goal file and continue instruction"]
   G2 --> H
   E4 --> H1["persist deferred occurrence"]
-  H1 --> E
-  E5 --> I["fail closed and terminate occurrence"]
-  E -->|missing| I
+  E5 --> I["fail closed this occurrence; recheck next interval"]
+  E -->|missing| I2["fail closed and terminate schedule"]
   H --> J["CodexApp send / thread queue"]
   J -->|accepted| K["accepted receipt"]
   K -->|matching target receipt| L["delivered"]
@@ -66,17 +66,18 @@ flowchart TD
 | Edge | Owner | Input | Output / state | Failure evidence |
 | --- | --- | --- | --- | --- |
 | Register goal → active | `policy.longhorizon` | goal id, goal file, session alias | active record with `activated_at` | missing goal file or session binding |
-| Active → liveness schedule | `policy.longhorizon` | activation timestamp | one-shot schedule due in 60s | schedule persistence error |
+| Active → liveness schedule | `policy.longhorizon` | activation timestamp | recurring schedule due in 60s, interval 60s | schedule persistence error |
 | Due → native status observation | `policy.timer` → `codexapp` | target identity | native thread state | status error maps to explicit failure |
 | Active/running → working | `codexapp` | native `active` or `running` | normalized `working` | native state is not treated as a direct policy state |
 | Idle/interrupted/cancelled → eligible | `codexapp` | native `idle`, `interrupted`, or `cancelled` | normalized send-eligible state | native state is not treated as a direct policy state |
 | Starting/stopping → deferred | `codexapp` | native `starting` or `stopping` | normalized deferred state | no blind send |
 | System error → failed | `codexapp` | native `systemError` | normalized `failed` | no blind send |
 | Unknown/disconnected/notLoaded → fail closed | `codexapp` | native `unknown`, `disconnected`, `failed`, or `notLoaded` | normalized fail-closed state | no blind send |
-| Working → skip | `hooksd` | `working` observation + `skip` | terminal `skipped`, no queue backlog | native send or steer would be a contract failure |
+| Working → skip | `hooksd` | `working` observation + `skip` | current occurrence `skipped`; next interval remains scheduled | native send or steer would be a contract failure |
 | Idle/interrupted → queue | `hooksd` | legal send state | `MessageIntent.operation=queue` with goal continuation body | no steer operation is allowed |
 | Starting/stopping → deferred | `hooksd` | normalized transition state | persisted pending occurrence | no blind send |
-| Unknown/disconnected/failed/missing → fail closed | `hooksd` | non-authoritative state | terminal failure, no send | error retained on the schedule |
+| Unknown/disconnected/failed → fail closed | `hooksd` | non-authoritative state | current occurrence failure; next interval remains scheduled | error retained on the schedule |
+| Missing/dead → fail closed | `hooksd` | missing target | terminal `session_missing`, no send | error retained on the schedule |
 | Queue → accepted | `codexapp` | target, body, attempt id | native accepted receipt | transport error remains explicit |
 | Accepted → delivered | `hooksd.transport` | matching target receipt | delivered evidence | acceptance alone is insufficient |
 | Delivered → executed → replied → read | `hooksd.transport` | matching item, turn, cursor | ordered evidence states | missing evidence leaves state unresolved |
@@ -87,8 +88,8 @@ flowchart TD
 
 1. A newly registered LongHorizon goal is active by default.
 2. The first liveness check is scheduled 60 seconds after activation.
-3. App Server `active` and `running` normalize to `working`; liveness skips them
-   without creating a queue backlog or steering.
+3. App Server `active` and `running` normalize to `working`; liveness skips the
+   current occurrence and checks again at the next interval without steering.
 4. App Server `idle`, `interrupted`, and `cancelled` normalize to send-eligible
    states; idle and interrupted receive a queue wake. Liveness never steers.
 5. App Server `starting` and `stopping` normalize to deferred states.
@@ -97,7 +98,9 @@ flowchart TD
 7. The queue wake body names the goal file and instructs the target to continue
    executing the goal.
 8. Starting and stopping are deferred until a legal observation.
-9. Unknown, disconnected, failed, missing, and dead targets fail closed.
+9. Unknown, disconnected, and failed targets fail closed for the current
+   occurrence and are checked again; missing and dead targets terminate the
+   schedule.
 10. Accepted, queued, delivered, executed, replied, and read are distinct
    evidence states.
 11. An uncertain delivery is reconciled by the same attempt identity and is
@@ -109,7 +112,7 @@ flowchart TD
 | --- | --- |
 | First liveness check | `test/longhorizon-liveness.test.js`: waits 60 seconds before the first wake |
 | Idle queue wake | `test/longhorizon-liveness.test.js`: wakes an idle target through queue |
-| Working/active/running skip | `test/longhorizon-liveness.test.js`: skips a working target without queueing; applies the active idle interrupted state matrix through queue wake |
+| Working/active/running skip | `test/longhorizon-liveness.test.js`: skips a working target without queueing and keeps probing until idle |
 | Idle/interrupted queue wake | `test/longhorizon-liveness.test.js`: wakes an idle and interrupted target through queue; applies the active idle interrupted state matrix through queue wake |
 | Native status normalization | `test/codexapp-entry.test.js`: maps every native thread status through the control socket |
 | Starting/stopping defer | `test/longhorizon-liveness.test.js`: defers while starting or stopping |

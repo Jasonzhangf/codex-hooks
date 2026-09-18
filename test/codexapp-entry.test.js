@@ -701,18 +701,18 @@ test("internal codexapp maps every native thread status through the control sock
 
 test("longhorizon liveness DAG applies every native status through the native bridge", async () => {
   for (const [nativeState, expectedDecision, expectedScheduleState] of [
-    ["active", "skipped", "skipped"],
-    ["running", "skipped", "skipped"],
-    ["idle", "sent", "sent"],
-    ["interrupted", "sent", "sent"],
-    ["cancelled", "sent", "sent"],
+    ["active", "skipped", "enabled"],
+    ["running", "skipped", "enabled"],
+    ["idle", "sent", "enabled"],
+    ["interrupted", "sent", "enabled"],
+    ["cancelled", "sent", "enabled"],
     ["starting", "deferred", "deferred_while_working"],
     ["stopping", "deferred", "deferred_while_working"],
-    ["systemError", "fail_closed", "failed"],
-    ["disconnected", "fail_closed", "failed"],
-    ["failed", "fail_closed", "failed"],
-    ["unknown", "fail_closed", "failed"],
-    ["notLoaded", "fail_closed", "failed"],
+    ["systemError", "fail_closed", "enabled"],
+    ["disconnected", "fail_closed", "enabled"],
+    ["failed", "fail_closed", "enabled"],
+    ["unknown", "fail_closed", "enabled"],
+    ["notLoaded", "fail_closed", "enabled"],
   ]) {
     const root = await mkdtemp(join(tmpdir(), `routecodex-longhorizon-dag-${nativeState}-`));
     const appserverSocket = join(root, "appserver.sock");

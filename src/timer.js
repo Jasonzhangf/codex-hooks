@@ -129,6 +129,7 @@ export class TimerOperator {
           state,
           last_decision: result.decision,
           last_delivery: result.delivery || null,
+          ...(result.error == null ? {} : { failure: clone(result.error) }),
         });
         results.push({ schedule_id: schedule.id, occurrence_id: occurrenceId, action, at, result });
       } catch (error) {
@@ -159,6 +160,13 @@ export class TimerOperator {
       : schedule.at;
     const occurrenceId = `timer:${schedule.id}:${at}`;
     if (schedule.current_occurrence === occurrenceId && OCCURRENCE_TERMINAL_STATES.has(schedule.state)) return null;
+    if ((schedule.mode || SCHEDULE_MODES.ONCE) === SCHEDULE_MODES.INTERVAL
+      && schedule.last_decision === "unknown_delivery"
+      && schedule.last_delivery?.state === "unknown_delivery") {
+      const intentId = schedule.last_delivery.intent_id;
+      const intent = typeof this.store.getIntent === "function" ? this.store.getIntent(intentId) : null;
+      if (!intent || intent.state === "unknown_delivery") return null;
+    }
     return { at, occurrenceId };
   }
 

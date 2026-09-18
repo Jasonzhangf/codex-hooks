@@ -717,7 +717,7 @@ options:
 
 notes:
   Records are active on registration.
-  goal mode schedules a one-shot liveness check after 60 seconds.
+  goal mode schedules a liveness check after 60 seconds and repeats every 60 seconds.
   periodic uses busy_policy=skip.
   The CLI does not expose a separate update or resume command.
 `;

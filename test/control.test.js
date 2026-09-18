@@ -716,6 +716,8 @@ test("longhorizon registration is active and schedules a 60 second liveness chec
   const liveness = control.query().schedules[registered.liveness_schedule_id];
   assert.equal(liveness.source, "longhorizon");
   assert.equal(liveness.at, "2026-09-18T12:01:00.000Z");
+  assert.equal(liveness.mode, "interval");
+  assert.equal(liveness.interval_ms, 60_000);
   assert.equal(liveness.send_mode, "idle_only");
   assert.equal(liveness.busy_policy, "skip");
   assert.equal(liveness.body.includes("/tmp/goal.md"), true);

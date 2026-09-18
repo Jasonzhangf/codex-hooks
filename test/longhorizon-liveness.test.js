@@ -20,12 +20,17 @@ function makeCodexapp(state, { statusError = null, sendError = null } = {}) {
     state,
     sends: [],
     steers: [],
+    sendError,
     async session_status() {
       if (statusError) throw statusError;
       return { state: this.state };
     },
     async send_message(request) {
-      if (sendError) throw sendError;
+      if (this.sendError) {
+        const error = this.sendError;
+        this.sendError = null;
+        throw error;
+      }
       this.sends.push(request);
       return { accepted: true, attempt_id: request.attempt_id };
     },
@@ -102,7 +107,11 @@ test("longhorizon liveness wakes an idle target through queue", async () => {
   assert.match(intents[0].body, /continue executing the goal/);
   assert.equal(codexapp.steers.length, 0);
   assert.equal(Object.hasOwn(intents[0], "turn_id"), false);
-  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "sent");
+  const schedule = store.getControl("schedules")[registered.liveness_schedule_id];
+  assert.equal(schedule.state, "enabled");
+  assert.equal(schedule.enabled, true);
+  assert.equal(schedule.last_decision, "sent");
+  assert.equal(schedule.next_at, "2026-09-18T12:02:00.000Z");
 });
 
 test("longhorizon liveness skips a working target without queueing", async () => {
@@ -113,9 +122,28 @@ test("longhorizon liveness skips a working target without queueing", async () =>
   assert.equal(codexapp.sends.length, 0);
   assert.equal(codexapp.steers.length, 0);
   assert.equal(intents.length, 0);
-  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "skipped");
-  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].enabled, false);
+  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "enabled");
+  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].enabled, true);
   assert.deepEqual(await timer.tick(), []);
+});
+
+test("longhorizon liveness keeps probing after a working target becomes idle", async () => {
+  const { codexapp, timer, intents, store, registered } = setup({ state: "working" });
+  timer.clock.advance(60_000);
+  const skipped = await timer.tick();
+  assert.equal(skipped[0].result.decision, "skipped");
+  assert.equal(codexapp.sends.length, 0);
+  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].enabled, true);
+
+  codexapp.state = "idle";
+  timer.clock.advance(60_000);
+  const fired = await timer.tick();
+  assert.equal(fired[0].result.decision, "sent");
+  assert.equal(codexapp.sends.length, 1);
+  assert.equal(codexapp.steers.length, 0);
+  assert.equal(intents.length, 1);
+  assert.equal(intents[0].operation, "queue");
+  assert.match(intents[0].body, /\/tmp\/goal\.md/);
 });
 
 test("longhorizon liveness wakes an interrupted target through queue", async () => {
@@ -129,7 +157,8 @@ test("longhorizon liveness wakes an interrupted target through queue", async () 
   assert.match(intents[0].body, /\/tmp\/goal\.md/);
   assert.match(intents[0].body, /continue executing the goal/);
   assert.equal(codexapp.steers.length, 0);
-  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "sent");
+  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "enabled");
+  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].enabled, true);
 });
 
 test("longhorizon liveness applies the active idle interrupted state matrix through queue wake", async () => {
@@ -167,7 +196,7 @@ test("longhorizon liveness defers while starting or stopping and resumes on idle
     const resumed = await timer.tick();
     assert.equal(resumed[0].result.sent.length, 1);
     assert.equal(codexapp.sends.length, 1);
-    assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "sent");
+    assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "enabled");
     assert.deepEqual(await timer.tick(), []);
   }
 });
@@ -179,8 +208,10 @@ test("longhorizon liveness fails closed for unknown disconnected failed", async 
     const fired = await timer.tick();
     assert.equal(fired[0].result.decision, "fail_closed");
     assert.equal(codexapp.sends.length, 0);
-    assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "failed");
-    assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].enabled, false);
+    assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "enabled");
+    assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].enabled, true);
+    assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].last_decision, "fail_closed");
+    assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].failure.code, `${state}_session`);
     assert.deepEqual(await timer.tick(), []);
   }
 });
@@ -198,20 +229,30 @@ test("longhorizon liveness records a missing session as terminal", async () => {
 
 test("longhorizon liveness pause stop and reactivate update the owned schedule", async () => {
   const handle = setup({ state: "idle" });
-  handle.control.mutate({ operation: "longhorizon.pause", id: "goal-1" });
   handle.timer.clock.advance(60_000);
+  await handle.timer.tick();
+  assert.equal(handle.codexapp.sends.length, 1);
+  handle.control.mutate({ operation: "longhorizon.pause", id: "goal-1" });
   assert.deepEqual(await handle.timer.tick(), []);
-  assert.equal(handle.codexapp.sends.length, 0);
+  assert.equal(handle.codexapp.sends.length, 1);
   handle.setNow("2026-09-18T13:00:00.000Z");
   handle.control.mutate({ operation: "longhorizon.activate", id: "goal-1" });
-  assert.equal(handle.store.getControl("schedules")[handle.registered.liveness_schedule_id].at, "2026-09-18T13:01:00.000Z");
+  const schedule = handle.store.getControl("schedules")[handle.registered.liveness_schedule_id];
+  assert.equal(schedule.at, "2026-09-18T13:01:00.000Z");
+  assert.equal(schedule.next_at, undefined);
+  assert.equal(schedule.next_occurrence_at, undefined);
+  assert.deepEqual(await handle.timer.tick(), []);
+  handle.timer.clock.advance(59_999);
+  assert.deepEqual(await handle.timer.tick(), []);
+  assert.equal(handle.codexapp.sends.length, 1);
+  handle.timer.clock.advance(1);
   handle.timer.clock.set("2026-09-18T13:01:00.000Z");
   const fired = await handle.timer.tick();
   assert.equal(fired[0].result.decision, "sent");
-  assert.equal(handle.codexapp.sends.length, 1);
+  assert.equal(handle.codexapp.sends.length, 2);
   handle.control.mutate({ operation: "longhorizon.stop", id: "goal-1" });
   assert.deepEqual(await handle.timer.tick(), []);
-  assert.equal(handle.codexapp.sends.length, 1);
+  assert.equal(handle.codexapp.sends.length, 2);
 });
 
 test("longhorizon liveness restart does not duplicate a terminal occurrence", async () => {
@@ -249,12 +290,23 @@ test("longhorizon liveness uncertain delivery reconciles without blind retry", a
   timer.clock.advance(60_000);
   const fired = await timer.tick();
   assert.equal(fired[0].result.decision, "unknown_delivery");
-  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "unknown_delivery");
+  const schedule = store.getControl("schedules")[registered.liveness_schedule_id];
+  assert.equal(schedule.state, "enabled");
+  assert.equal(schedule.enabled, true);
+  assert.equal(schedule.last_decision, "unknown_delivery");
+  assert.equal(schedule.failure.code, "transport_timeout");
+  assert.deepEqual(await timer.tick(), []);
+  assert.equal(codexapp.sends.length, 0);
+  timer.clock.advance(60_000);
   assert.deepEqual(await timer.tick(), []);
   assert.equal(codexapp.sends.length, 0);
   const intentId = fired[0].result.delivery.intent_id;
   const delivered = await daemon.reconcileDeliveryEvidence(intentId);
   assert.equal(delivered.state, "delivered");
+  timer.clock.advance(60_000);
+  const next = await timer.tick();
+  assert.equal(next[0].result.decision, "sent");
+  assert.equal(codexapp.sends.length, 1);
 });
 
 test("longhorizon liveness uses queue and never steers", async () => {

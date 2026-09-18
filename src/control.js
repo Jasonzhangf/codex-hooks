@@ -467,12 +467,14 @@ export class FrameworkControlPlane {
       record.target = target;
       record.owner_session_id = record.owner_session_id || target.thread_id;
       record.review_count ??= 0;
+      const activatedAt = Date.parse(record.activated_at);
       const schedule = this.upsertSchedule({
         operation: "schedule.upsert",
         id: `longhorizon-liveness:${id}`,
         action: SCHEDULE_ACTIONS.NOTIFY,
-        mode: SCHEDULE_MODES.ONCE,
-        at: new Date(Date.parse(record.activated_at) + LONGHORIZON_LIVENESS_DELAY_MS).toISOString(),
+        mode: SCHEDULE_MODES.INTERVAL,
+        at: new Date(activatedAt + LONGHORIZON_LIVENESS_DELAY_MS).toISOString(),
+        interval_ms: LONGHORIZON_LIVENESS_DELAY_MS,
         body: `LongHorizon goal liveness check. Read ${record.goal_file} and continue executing the goal if the target is idle or interrupted. Do not duplicate work if it is already active or running.`,
         target,
         send_mode: SEND_MODES.IDLE_ONLY,

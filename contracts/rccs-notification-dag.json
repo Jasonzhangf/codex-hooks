@@ -18,13 +18,11 @@
     { "id": "appserver_system_error", "owner": "codexapp", "kind": "observation" },
     { "id": "appserver_unknown_disconnected", "owner": "codexapp", "kind": "observation" },
     { "id": "session_observed", "owner": "codexapp", "kind": "observation" },
-    { "id": "session_rechecked", "owner": "codexapp", "kind": "observation" },
     { "id": "working_active", "owner": "hooksd", "kind": "gate" },
     { "id": "interrupted_idle", "owner": "hooksd", "kind": "gate" },
     { "id": "starting_stopping", "owner": "hooksd", "kind": "gate" },
     { "id": "fail_closed", "owner": "hooksd", "kind": "gate" },
-    { "id": "recheck_trigger", "owner": "hooksd", "kind": "event" },
-    { "id": "skipped", "owner": "policy.timer", "kind": "terminal" },
+    { "id": "skipped", "owner": "policy.timer", "kind": "state" },
     { "id": "deferred", "owner": "policy.timer", "kind": "state" },
     { "id": "queue_intent", "owner": "hooksd.transport", "kind": "operation" },
     { "id": "native_accepted", "owner": "codexapp", "kind": "receipt" },
@@ -34,7 +32,8 @@
     { "id": "read", "owner": "codexapp", "kind": "evidence" },
     { "id": "unknown_delivery", "owner": "hooksd.transport", "kind": "state" },
     { "id": "reconcile", "owner": "hooksd.transport", "kind": "operation" },
-    { "id": "terminal_failure", "owner": "policy.timer", "kind": "terminal" }
+    { "id": "occurrence_failure", "owner": "policy.timer", "kind": "state" },
+    { "id": "session_missing_terminal", "owner": "policy.timer", "kind": "terminal" }
   ],
   "edges": [
     { "from": "control_mutation", "to": "longhorizon_goal_active", "event": "register_goal" },
@@ -61,11 +60,6 @@
     { "from": "session_observed", "to": "fail_closed", "event": "state_unknown_disconnected_failed_or_missing" },
     { "from": "working_active", "to": "skipped", "event": "busy_policy_skip" },
     { "from": "starting_stopping", "to": "deferred", "event": "persist_pending" },
-    { "from": "recheck_trigger", "to": "session_rechecked", "event": "legal_state_recheck" },
-    { "from": "session_rechecked", "to": "working_active", "event": "state_working" },
-    { "from": "session_rechecked", "to": "interrupted_idle", "event": "state_interrupted_or_idle" },
-    { "from": "session_rechecked", "to": "starting_stopping", "event": "state_starting_or_stopping" },
-    { "from": "session_rechecked", "to": "fail_closed", "event": "state_unknown_disconnected_failed_or_missing" },
     { "from": "interrupted_idle", "to": "queue_intent", "event": "queue_wake" },
     { "from": "queue_intent", "to": "native_accepted", "event": "native_accept" },
     { "from": "native_accepted", "to": "delivered", "event": "target_receipt" },
@@ -75,7 +69,8 @@
     { "from": "queue_intent", "to": "unknown_delivery", "event": "uncertain_transport" },
     { "from": "unknown_delivery", "to": "reconcile", "event": "reconcile_attempt" },
     { "from": "reconcile", "to": "delivered", "event": "matching_receipt" },
-    { "from": "fail_closed", "to": "terminal_failure", "event": "record_failure" }
+    { "from": "fail_closed", "to": "occurrence_failure", "event": "record_occurrence_failure" },
+    { "from": "fail_closed", "to": "session_missing_terminal", "event": "session_missing" }
   ],
   "resources": [
     { "id": "schedule_state", "owner": "policy.timer", "mutable": true },
@@ -96,7 +91,7 @@
   "invariants": [
     "registering a LongHorizon goal record activates it by default",
     "the first liveness check is scheduled 60 seconds after activation",
-    "working or active targets are skipped without queueing another wake",
+    "working or active targets skip the current occurrence and are checked again at the next interval",
     "appserver active and running normalize to working and are skipped without steering or queueing",
     "interrupted and idle targets receive a queue wake, never steer",
     "appserver interrupted and cancelled normalize to interrupted, and idle remains idle, before the queue wake",
@@ -105,7 +100,8 @@
     "appserver disconnected, failed, unknown, and notLoaded states fail closed without a queue wake",
     "the queue wake body names the goal file and instructs the target to continue executing the goal",
     "starting and stopping are deferred until a legal observation",
-    "unknown, disconnected, failed, missing, and dead targets fail closed",
+    "unknown, disconnected, and failed targets fail closed for the current occurrence and are checked again",
+    "missing and dead targets fail closed and terminate the liveness schedule",
     "accepted, queued, delivered, executed, replied, and read are distinct evidence states",
     "uncertain delivery enters reconciliation and is never blindly retried"
   ],

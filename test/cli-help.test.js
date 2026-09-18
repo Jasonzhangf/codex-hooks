@@ -4,11 +4,17 @@ import test from "node:test";
 
 test("rccs command help exits without daemon access or mutation", async () => {
   const cases = [
-    { args: ["--help"], expected: "usage: rccs init" },
+    { args: ["--help"], expected: "rccs init" },
     { args: ["schedule", "--help"], expected: "rccs schedule add <id> <at> <body>" },
     { args: ["wait", "--help"], expected: "rccs wait <duration> [body]" },
     { args: ["subagent", "--help"], expected: "rccs subagent create <prompt>" },
     { args: ["mcp", "--help"], expected: "rccs mcp register" },
+    { args: ["session", "--help"], expected: "rccs session bind" },
+    { args: ["config", "--help"], expected: "rccs config set <key> <value>" },
+    { args: ["hook", "--help"], expected: "rccs hook enable stop" },
+    { args: ["supervisor", "--help"], expected: "rccs supervisor enable" },
+    { args: ["operator", "--help"], expected: "rccs operator enable <name>" },
+    { args: ["longhorizon", "--help"], expected: "rccs longhorizon register <id>" },
   ];
 
   for (const entry of cases) {
@@ -45,12 +51,18 @@ test("rccs help documents defaults and state semantics", async () => {
 
   const subagent = await runCli(["subagent", "--help"]);
   assert.equal(subagent.code, 0, subagent.stderr);
-  assert.match(subagent.stdout, /rejected: native create_subagent/);
+  assert.doesNotMatch(subagent.stdout, /--profile/);
   assert.match(subagent.stdout, /turn\/interrupt only/);
 
   const mcp = await runCli(["mcp", "--help"]);
   assert.equal(mcp.code, 0, mcp.stderr);
   assert.match(mcp.stdout, /MCP is read-only/);
+
+  const longhorizon = await runCli(["longhorizon", "--help"]);
+  assert.equal(longhorizon.code, 0, longhorizon.stderr);
+  assert.match(longhorizon.stdout, /--mode periodic\|goal/);
+  assert.match(longhorizon.stdout, /--review-budget/);
+  assert.match(longhorizon.stdout, /registered paused/);
 });
 
 test("rccs validates action-specific schedule selectors before mutation", async () => {

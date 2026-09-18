@@ -1,8 +1,10 @@
 # Hooks Framework
 
-Status: framework baseline only. This document is the architectural contract;
-it does not enable Stopless, scheduling, update-goal mutation, Memory, or
-long-horizon behavior.
+Status: Stage 2 implemented contract with explicit opt-in product behavior.
+This document defines the layer and ownership boundary. Scheduling and
+LongHorizon are implemented; Stopless goal review is implemented but remains
+disabled until an explicit LongHorizon goal record is activated. Update-goal
+mutation and Memory remain boundary-only.
 
 ## 1. Layer contract
 
@@ -89,19 +91,22 @@ Every `MessageIntent` has exactly one mode:
 
 `starting`, `stopping`, `unknown`, `disconnected`, and `failed` do not permit a
 guess. They defer or fail explicitly according to the typed contract. Manual
-input is an independent suppress gate, including for `working_allowed`.
+input is the target suppress gate for `working_allowed`; the current bridge
+reports `input_active=false`, so that suppression is not yet live-verified.
 
 ## 6. Operator slots
 
 The registry provides independent slots for `stopless`, `timer`, `update-goal`,
-`longhorizon`, and `memory`. The baseline exposes their contracts and status
-slots but does not enable their product behavior. Timer wakeups, when later
-implemented, originate inside the daemon clock and enter the same typed
+`longhorizon`, and `memory`. Timer and LongHorizon product behavior are
+implemented and opt-in. Stopless goal review is activated only through a
+LongHorizon `goal` record. Update-goal mutation and Memory remain boundary-only.
+Timer wakeups originate inside the daemon clock and enter the same typed
 `MessageIntent` path; they are not synthetic official Hook events.
 
 ## 7. Non-goals and safety boundary
 
-This baseline deliberately does not implement a Stopless loop, reasoning-stop
-injection, native Stop continuation, goal mutation, recurring schedule policy,
-Memory extraction/injection, or real TUI/Desktop delivery claims. RouteCodex V3
-must therefore remain free of a second continuation implementation.
+This Stage 2 surface deliberately does not implement reasoning-stop injection,
+native Stop continuation, goal mutation, Memory extraction/injection, or
+provider request/schema augmentation. Stopless feedback is delivery-plane
+only. RouteCodex V3 must therefore remain free of a second continuation
+implementation.

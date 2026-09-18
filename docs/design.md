@@ -1,8 +1,10 @@
 # RouteCodex Hooks Framework Design
 
-Status: framework implementation with session-bound timer delivery. No
-Stopless, memory, or goal policy is enabled by default. The timer is opt-in
-through CLI schedule mutation and runs on the daemon clock.
+Status: framework implementation with session-bound timer delivery. Stopless
+goal review and LongHorizon are opt-in and disabled by default. The timer is
+opt-in through CLI schedule mutation and runs on the daemon clock. Request
+augmentation and memory remain design/boundary items, not implemented
+capabilities.
 
 ## Decision
 
@@ -115,10 +117,11 @@ never pass synthetic lifecycle JSON through the Hook adapter.
 
 Current planned policies:
 
-- Stopless: Stop event, `stop_hook_active` guard, own loop budget/state.
-- update-goal: exact `update_goal` tool matcher, own goal revision/state.
-- timer: CLI-created schedule, daemon clock, own occurrence state.
-- longhorizon: future checkpoint/wake condition, own state.
+- Stopless: implemented as LongHorizon goal review behind an explicitly
+  activated goal record.
+- update-goal: boundary only; no mutation implementation.
+- timer: implemented through CLI-created schedules and the daemon clock.
+- longhorizon: implemented periodic and goal modes; both are opt-in.
 - memory: future input injection and extraction, explicitly out of scope now.
 
 ## Message gate
@@ -133,9 +136,12 @@ not retried blindly.
 
 ## Non-goals of this baseline
 
-- no Stopless behavior;
+- no Stopless behavior unless an explicit LongHorizon goal record is activated;
 - no memory capture or injection;
-- no goal mutation;
+- no goal mutation or update-goal operator;
 - no provider `reasoningStop` compatibility path;
+- no `rccs` CLI steer command or direct session-status/subagent-result read
+  command;
+- no provider request/schema augmentation;
 - no claim of real TUI/Desktop bidirectional proof until same-entry replay
   produces the required evidence sequence.

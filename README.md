@@ -1,8 +1,8 @@
 # RouteCodex Hooks Framework
 
 This repository is the runnable framework boundary for RouteCodex lifecycle
-hooks. It intentionally does not enable Stopless, memory, or goal mutation
-behavior.
+hooks. Stopless goal review, timer scheduling, and LongHorizon are opt-in.
+Memory and goal mutation remain outside the current surface.
 
 It is also a valid Codex plugin. The manifest is
 [`.codex-plugin/plugin.json`](.codex-plugin/plugin.json), and the official
@@ -67,7 +67,7 @@ the RouteCodex-internal `rccv3-codexapp`. The supervisor verifies its
 advertised bridge and registered identities, then starts hooksd; shutdown is
 always hooksd first and CodexApp second.
 
-    routecodex-hooks supervisor-enable
+    rccs supervisor enable
 
 The installed supervisor entry is routecodex-hooks-supervisor --config
 ~/.codex/routecodex-hooks/config/hooksd.json. It is a process supervisor only;
@@ -83,14 +83,15 @@ npm run init
 ```
 
 `init` installs the local `src/`, `hooks/`, and `skills/` under
-`~/.codex/routecodex-hooks`, copies the skills into `~/.codex/skills` and
-`~/.agent/skills`, creates
+`~/.codex/routecodex-hooks`, copies the single managed `rccs` Skill into
+`~/.codex/skills` and `~/.agent/skills`, creates
 the daemon configuration and executable CLI/MCP/daemon wrappers under
 `~/.local/bin`, and
 registers the managed official Stop hook in `~/.codex/hooks.json`. It does not
-overwrite unrelated hook entries and can be repeated safely. For an isolated
-installation, pass `--codex-home`, `--bin-dir`, `--agent-home`, and
-`--endpoint`.
+overwrite unrelated hook entries or unrelated Skills, removes only the retired
+managed Skill directories `routecodex-hooks`, `scheduling`, `stopless`, and
+`update-goal`, and can be repeated safely. For an isolated installation, pass
+`--codex-home`, `--bin-dir`, `--agent-home`, and `--endpoint`.
 
 Bundled plugin hooks resolve the same default install record at
 `~/.codex/routecodex-hooks/install.json`; run `npm run init` before enabling

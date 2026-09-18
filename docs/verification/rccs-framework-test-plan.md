@@ -129,13 +129,14 @@ Command:
 node --test test/framework.test.js
 ```
 
-Precondition: exercise all nine session states with both send modes and with
-`input_active=true`.
+Precondition: exercise all nine session states with both send modes. The
+`input_active=true` rows are a future/target test until the bridge reports real
+input state instead of the current constant `false`.
 
 Expected state: the gate matches
 [`../../contracts/state-machine.json`](../../contracts/state-machine.json);
-`input_active=true` always defers; unknown/disconnected/failed always fail
-closed.
+The future `input_active=true` contract requires deferral; unknown,
+disconnected, and failed always fail closed.
 
 Evidence: `artifacts/rccs-closeout/U4/gate-matrix.json`, including call count
 per combination.
@@ -283,12 +284,14 @@ node src/cli.js init --codex-home "$CODEX_HOME" \
 find "$CODEX_HOME/skills" "$RCCS_AGENT_HOME/skills" -name SKILL.md -print | sort
 ```
 
-Precondition: both skill roots are empty except for one unrelated skill file
-created by the test.
+Precondition: both skill roots contain one unrelated skill file and the
+retired managed directories `routecodex-hooks`, `scheduling`, `stopless`, and
+`update-goal`.
 
-Expected state: managed skills exist in both roots; the unrelated file is
-preserved; a second init does not duplicate files or hook entries; skill
-content includes parameter semantics.
+Expected state: only the managed `rccs` Skill exists in both roots, the
+unrelated file is preserved, retired managed Skill directories are removed,
+a second init does not duplicate files or hook entries, and the installed
+Skill includes parameter semantics.
 
 Evidence: `artifacts/rccs-closeout/U11/skill-tree-before.json`,
 `skill-tree-after-first.json`, and `skill-tree-after-second.json`.
@@ -480,8 +483,9 @@ Precondition: a test Codex App Server accepts `thread/start` with
 `ephemeral: true` and `turn/start`.
 
 Expected state: one child record contains the native thread and turn IDs,
-`ephemeral: true`, normalized state, target, prompt digest, and profile
-snapshot; the child does not inherit caller context.
+`ephemeral: true`, normalized state, target, and prompt digest; the child does
+not inherit caller context. No profile snapshot is expected because the native
+create boundary has no profile selector.
 
 Evidence: `artifacts/rccs-closeout/I7/create-receipt.json` and
 `subagent-list.json`.
@@ -704,7 +708,7 @@ Evidence: `artifacts/rccs-closeout/L3/busy-state.jsonl` and
 Failure criteria: injection while working, a queued backlog, or a skipped
 occurrence reported as sent.
 
-### L4. User input suppression live behavior
+### L4. User input suppression target behavior (not currently runnable)
 
 Command:
 
@@ -715,12 +719,13 @@ node src/cli.js wait 3s 'RCCS_INPUT_SUPPRESSION_<run-id>' \
 tmux -S "$TMUX_SOCKET" capture-pane -t rccs-live -p
 ```
 
-Precondition: the TUI has active user input (`input_active=true`) at due
-time.
+Precondition: the bridge reports real active user input (`input_active=true`)
+at due time. The current bridge hardcodes `false`, so this test is blocked
+until that observation is implemented.
 
-Expected state: the intent is deferred and no native send occurs until input
-becomes inactive; the TUI does not receive the marker while the user is
-typing.
+Expected state once the observation exists: the intent is deferred and no
+native send occurs until input becomes inactive; the TUI does not receive the
+marker while the user is typing.
 
 Evidence: `artifacts/rccs-closeout/L4/input-active.json` and
 `native-call-count.json`.
@@ -941,13 +946,18 @@ Precondition: one ordinary Stop event with a registered goal and no user
 interrupt; a separate user-interrupt Stop event.
 
 Expected state: ordinary Stop creates one isolated reviewer; user interrupt
-creates none; reviewer output with a gap creates one feedback intent; no
-reviewer is created on `stop_hook_active=true`.
+creates none; functional incompletion, architecture P0/P1, or an invalid
+blocker creates one feedback intent; non-compliant or uncertain architecture
+also creates feedback; a complete review, compliant P2-only architecture
+finding, or reasonable unsolvable blocker with recorded attempts passes; no
+reviewer is created on `stop_hook_active=true`; pending reviewer reads are
+polled until completion within the default five-minute wait.
 
 Evidence: `artifacts/rccs-closeout/G2/reviewer-events.jsonl`.
 
 Failure criteria: context inheritance, reviewer loop, user-interrupt review,
-or feedback without a validated gap.
+feedback for P2-only findings, feedback after a legitimate blocked result, or
+acceptance of an invalid blocker.
 
 ### G3. Reviewer failure is non-blocking
 
@@ -1000,8 +1010,8 @@ node src/cli.js status
 Precondition: inspect the installed Hook manifest and event schemas.
 
 Expected state: `SessionStart` and `UserPromptSubmit` context projection is
-documented as available; arbitrary final-request schema injection is marked
-`blocked` and is not implemented.
+documented as available; arbitrary final-request schema injection is
+design-only and is not implemented.
 
 Evidence: `artifacts/rccs-closeout/R1/capability-report.json` and the
 installed skill text.
@@ -1020,7 +1030,7 @@ rg -n "provider.*request|system prompt|schema injection" src hooks contracts ski
 Precondition: candidate source tree.
 
 Expected state: no second provider request path and no direct request rewrite
-from Hook output; request augmentation remains an explicit blocked item.
+from Hook output; request augmentation remains an explicit design-only item.
 
 Evidence: `artifacts/rccs-closeout/R2/source-scan.log`.
 
@@ -1039,7 +1049,7 @@ The Stage 2 candidate may enter delivery only when:
   displays the exact marker;
 - one ephemeral subagent is created, listed, stopped with `turn/interrupt`,
   and shows no post-stop work;
-- the request-augmentation report marks schema injection `blocked` rather
+- the request-augmentation report marks schema injection design-only rather
   than claiming completion;
 - every missing or skipped test has an explicit `NOT RUN` or `UNVERIFIED`
   entry in the final report.

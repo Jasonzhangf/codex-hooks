@@ -97,7 +97,7 @@ TIMER / DELIVERY PLANE
   +----+---------+---------+----+
        |         |         |
        | busy    | input   | unknown / disconnected /
-       | defer   | active  | failed / dead
+       | defer   | active* | failed / dead
        v         v         v
   +---------+ +---------+ +-------------+
   | defer   | | defer   | | fail closed |
@@ -110,7 +110,7 @@ TIMER / DELIVERY PLANE
   +-----------------------------+
   | typed SendRequest            |
   | queue (default)             |
-  | steer only explicit live turn|
+  | steer internal policy only   |
   | interrupt only stop request  |
   +--------------+--------------+
                  |
@@ -120,7 +120,7 @@ TIMER / DELIVERY PLANE
   | only native send boundary    |
   +--------------+--------------+
                  |
-                 | thread/queue/add | turn/steer | turn/interrupt
+                 | thread/queue/add | turn/steer* | turn/interrupt
                  v
   +-----------------------------+
   | Codex App Server             |
@@ -129,6 +129,9 @@ TIMER / DELIVERY PLANE
                  | native acceptance
                  v
   +-----------------------------+
+
+  * target behavior only: the current bridge reports input_active=false,
+    and the current rccs CLI does not expose a steer command.
   | delivery ledger              |
   | accepted / sent              |
   | NOT delivery/reply/read      |
@@ -239,14 +242,14 @@ STOPLESS / LONGHORIZON GOAL REVIEW
                  v
   +-----------------------------+
   | fixed reviewer prompt       |
-  | goal / observed / gap       |
-  | next_action / evidence      |
-  | completion_claim / blocked  |
+  | goal / observed / evidence  |
+  | functional + architecture   |
+  | blocked_review when blocked |
   +--------------+--------------+
                  |
                  +---- failure/timeout ----> unresolved, non-blocking
                  |
-                 | valid gap
+                 | incomplete / blocked / architecture issue
                  v
   +-----------------------------+
   | delivery plane feedback     |

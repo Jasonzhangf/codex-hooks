@@ -5,7 +5,7 @@ import {
   interruptSuppressionKey,
 } from "./protocol.js";
 
-const DEFAULT_REVIEW_TIMEOUT_MS = 30_000;
+const DEFAULT_REVIEW_TIMEOUT_MS = 300_000;
 const DEFAULT_REVIEW_POLL_INTERVAL_MS = 250;
 
 export class GoalReviewRunner {
@@ -107,8 +107,8 @@ export class GoalReviewRunner {
     if (reviews[reviewId]) return { claimed: false, review: clone(reviews[reviewId]) };
 
     const reviewCount = Number.isInteger(goal.review_count) ? goal.review_count : 0;
-    const reviewBudget = Number.isInteger(goal.review_budget) ? goal.review_budget : 1;
-    if (reviewCount >= reviewBudget) {
+    const reviewBudget = Number.isInteger(goal.review_budget) ? goal.review_budget : null;
+    if (reviewBudget != null && reviewCount >= reviewBudget) {
       reviews[reviewId] = {
         review_id: reviewId,
         goal_id: goal.id,
@@ -201,9 +201,12 @@ export class GoalReviewRunner {
         });
       }
       const report = parseReviewerReport(result.finalMessage);
+      const decision = evaluateReviewerReport(report);
       this.updateReview(reviewId, {
         state: "completed",
         report,
+        review_decision: decision.action,
+        feedback_required: decision.feedback_required,
         result_receipt: clone(result),
         completed_at: this.now(),
       });
@@ -212,7 +215,7 @@ export class GoalReviewRunner {
         last_review_receipt: clone(result),
       });
 
-      if (report.gap.trim() === "" || report.next_action.trim() === "") return;
+      if (!decision.feedback_required) return;
       if (!this.isGoalActive(goal.id)) {
         this.updateReview(reviewId, {
           state: "cancelled",
@@ -225,7 +228,7 @@ export class GoalReviewRunner {
         intent_id: `goal-feedback:${reviewId}`,
         source: "longhorizon",
         target: clone(goal.target),
-        body: feedbackBody(report),
+        body: feedbackBody(report, decision),
         send_mode: "idle_only",
         busy_policy: "defer",
         operation: "queue",
@@ -320,39 +323,65 @@ export function parseReviewerReport(value) {
       code: "reviewer_report_invalid",
     });
   }
-  for (const field of ["goal", "observed", "gap", "next_action"]) {
-    if (typeof report[field] !== "string") {
-      throw Object.assign(new Error(`goal reviewer report field must be a string: ${field}`), {
-        code: "reviewer_report_invalid",
-      });
+  assertStringField(report, "goal");
+  assertStringField(report, "observed");
+  assertStringArrayField(report, "evidence_refs");
+  assertObjectField(report, "functional");
+  assertObjectField(report, "architecture");
+  const functional = report.functional;
+  if (!["complete", "incomplete", "blocked"].includes(functional.status)) {
+    throw invalidReport("functional.status must be complete, incomplete, or blocked");
+  }
+  assertStringField(functional, "gap");
+  assertStringField(functional, "next_action");
+  if (functional.status === "incomplete" && (functional.gap.trim() === "" || functional.next_action.trim() === "")) {
+    throw invalidReport("incomplete functional review requires gap and next_action");
+  }
+  const architecture = report.architecture;
+  if (!["compliant", "non_compliant", "uncertain"].includes(architecture.status)) {
+    throw invalidReport("architecture.status must be compliant, non_compliant, or uncertain");
+  }
+  if (!Array.isArray(architecture.findings)) throw invalidReport("architecture.findings must be an array");
+  for (const finding of architecture.findings) {
+    assertObjectValue(finding, "architecture finding");
+    if (!["P0", "P1", "P2"].includes(finding.severity)) {
+      throw invalidReport("architecture finding severity must be P0, P1, or P2");
     }
+    assertStringField(finding, "summary");
+    assertStringArrayField(finding, "evidence");
+    assertStringField(finding, "next_action");
   }
-  if (typeof report.completion_claim !== "boolean") {
-    throw Object.assign(new Error("goal reviewer report field must be boolean: completion_claim"), {
-      code: "reviewer_report_invalid",
-    });
-  }
-  if (!Array.isArray(report.evidence_refs) || report.evidence_refs.some((entry) => typeof entry !== "string")) {
-    throw Object.assign(new Error("goal reviewer report field must be a string array: evidence_refs"), {
-      code: "reviewer_report_invalid",
-    });
-  }
-  if (report.blocked_reason !== null && typeof report.blocked_reason !== "string") {
-    throw Object.assign(new Error("goal reviewer report field must be null or a string: blocked_reason"), {
-      code: "reviewer_report_invalid",
-    });
+  if (functional.status === "blocked") {
+    assertObjectField(report, "blocked_review");
+    const blocked = report.blocked_review;
+    assertStringField(blocked, "reason");
+    for (const field of ["reasonable", "solvable", "attempts_sufficient"]) {
+      if (typeof blocked[field] !== "boolean") throw invalidReport(`blocked_review.${field} must be boolean`);
+    }
+    assertStringArrayField(blocked, "attempts_expected");
+    assertStringArrayField(blocked, "attempts_observed");
+    assertStringField(blocked, "next_action");
+  } else if (report.blocked_review !== null) {
+    throw invalidReport("blocked_review must be null unless functional.status is blocked");
   }
   return report;
 }
 
 export function buildReviewerPrompt({ goal_file, goal_text, source_turn_id, source_summary }) {
   return [
-    "You are an isolated goal reviewer. Do not modify files.",
-    "Compare the source turn with the goal document. Identify only a concrete remaining gap.",
+    "You are an isolated goal reviewer. Do not modify files or implement the task.",
+    "Review the source turn against the goal document and the current repository.",
+    "Evaluate functional completion, architecture compliance, and any claimed blocker.",
+    "Do not be overly strict: P2 suggestions do not block completion.",
+    "A review passes when the function is complete or legitimately blocked and architecture has no P0/P1 finding.",
+    "For a claimed blocker, judge whether the reason is reasonable, whether it is solvable now, and whether the expected attempts were actually made.",
     "Return exactly one JSON object and no prose or markdown.",
-    "Required fields: goal, observed, gap, next_action, completion_claim, evidence_refs, blocked_reason.",
-    "Types: string, string, string, string, boolean, string array, null or string.",
-    "If the task is complete, use an empty gap and explain why the evidence is sufficient.",
+    "Required fields: goal, observed, evidence_refs, functional, architecture, blocked_review.",
+    "functional: {status: complete|incomplete|blocked, gap: string, next_action: string}.",
+    "architecture: {status: compliant|non_compliant|uncertain, findings: [{severity: P0|P1|P2, summary, evidence: string[], next_action}]}.",
+    "blocked_review: null unless functional.status is blocked; otherwise {reason, reasonable, solvable, attempts_sufficient, attempts_expected: string[], attempts_observed: string[], next_action}.",
+    "Use an empty gap when complete. For blocked, describe the blocker and why it is or is not acceptable.",
+    "Architecture findings must cite concrete files, behavior, or verification evidence.",
     `Goal file: ${goal_file}`,
     "Goal document:",
     goal_text,
@@ -360,6 +389,55 @@ export function buildReviewerPrompt({ goal_file, goal_text, source_turn_id, sour
     "Source turn summary:",
     source_summary || "(not provided)",
   ].join("\n");
+}
+
+export function evaluateReviewerReport(report) {
+  const feedbacks = [];
+  if (report.functional.status === "incomplete") {
+    feedbacks.push({
+      kind: "functional",
+      gap: report.functional.gap,
+      next_action: report.functional.next_action,
+    });
+  } else if (report.functional.status === "blocked") {
+    const blocked = report.blocked_review;
+    const evidence_incomplete = (
+      blocked.reason.trim() === ""
+      || blocked.next_action.trim() === ""
+      || blocked.attempts_expected.length === 0
+      || blocked.attempts_observed.length === 0
+    );
+    if (!blocked.reasonable || blocked.solvable || !blocked.attempts_sufficient || evidence_incomplete) {
+      feedbacks.push({
+        kind: "blocked",
+        reason: blocked.reason,
+        reasonable: blocked.reasonable,
+        solvable: blocked.solvable,
+        attempts_sufficient: blocked.attempts_sufficient,
+        evidence_incomplete,
+        attempts_expected: blocked.attempts_expected,
+        attempts_observed: blocked.attempts_observed,
+        next_action: blocked.next_action,
+      });
+    }
+  }
+  const blockingFindings = report.architecture.findings.filter((finding) => ["P0", "P1"].includes(finding.severity));
+  if (report.architecture.status !== "compliant" || blockingFindings.length > 0) {
+    feedbacks.push({
+      kind: "architecture",
+      status: report.architecture.status,
+      findings: report.architecture.status === "compliant"
+        ? blockingFindings
+        : report.architecture.findings,
+      next_action: blockingFindings[0]?.next_action
+        || "Resolve the architecture issue and rerun the goal review.",
+    });
+  }
+  return {
+    action: feedbacks.length === 0 ? "pass" : "feedback_required",
+    feedback_required: feedbacks.length > 0,
+    feedbacks,
+  };
 }
 
 function reviewIdentity(goal, event) {
@@ -374,13 +452,59 @@ function scopeTarget(target) {
   };
 }
 
-function feedbackBody(report) {
-  return [
-    "Goal review found a gap.",
+function feedbackBody(report, decision) {
+  const lines = [
+    "Goal review found a blocking issue.",
     `Goal: ${report.goal}`,
     `Observed: ${report.observed}`,
-    `Gap: ${report.gap}`,
-    `Next action: ${report.next_action}`,
-    ...(report.blocked_reason ? [`Blocked: ${report.blocked_reason}`] : []),
-  ].join("\n");
+  ];
+  for (const feedback of decision.feedbacks) {
+    if (feedback.kind === "functional") {
+      lines.push(`Functional gap: ${feedback.gap}`);
+      lines.push(`Functional next action: ${feedback.next_action}`);
+    } else if (feedback.kind === "architecture") {
+      lines.push(`Architecture status: ${feedback.status}`);
+      for (const finding of feedback.findings) {
+        lines.push(`Architecture ${finding.severity}: ${finding.summary}`);
+        lines.push(`Architecture evidence: ${finding.evidence.join("; ")}`);
+        lines.push(`Architecture next action: ${finding.next_action}`);
+      }
+      if (feedback.findings.length === 0) {
+        lines.push(`Architecture next action: ${feedback.next_action}`);
+      }
+    } else if (feedback.kind === "blocked") {
+      lines.push(`Blocked reason: ${feedback.reason || "(missing)"}`);
+      lines.push(`Blocked review: reasonable=${feedback.reasonable}, solvable=${feedback.solvable}, attempts_sufficient=${feedback.attempts_sufficient}, evidence_incomplete=${feedback.evidence_incomplete}`);
+      lines.push(`Expected attempts: ${feedback.attempts_expected.join("; ") || "none recorded"}`);
+      lines.push(`Observed attempts: ${feedback.attempts_observed.join("; ") || "none recorded"}`);
+      lines.push(`Blocked next action: ${feedback.next_action || "Provide a concrete blocker reason, record the expected and observed attempts, and rerun the goal review."}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function assertStringField(value, field) {
+  if (typeof value[field] !== "string") throw invalidReport(`${field} must be a string`);
+}
+
+function assertStringArrayField(value, field) {
+  if (!Array.isArray(value[field]) || value[field].some((entry) => typeof entry !== "string")) {
+    throw invalidReport(`${field} must be a string array`);
+  }
+}
+
+function assertObjectField(value, field) {
+  assertObjectValue(value[field], field);
+}
+
+function assertObjectValue(value, name) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw invalidReport(`${name} must be an object`);
+  }
+}
+
+function invalidReport(message) {
+  return Object.assign(new Error(`goal reviewer report field is invalid: ${message}`), {
+    code: "reviewer_report_invalid",
+  });
 }

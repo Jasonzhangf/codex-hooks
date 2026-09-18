@@ -459,7 +459,6 @@ export class FrameworkControlPlane {
       const target = this.resolveSessionTarget(record.session);
       record.target = target;
       record.owner_session_id = record.owner_session_id || target.thread_id;
-      record.review_budget ??= 1;
       record.review_count ??= 0;
     }
     records[id] = record;

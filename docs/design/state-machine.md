@@ -25,8 +25,9 @@ is unavailable; it never means hooksd is ready.
 
 The observed states are `unknown`, `starting`, `working`, `idle`,
 `waiting_for_input`, `stopping`, `stopped`, `disconnected`, and `failed`.
-The orthogonal `input_active` flag suppresses automatic sending. The complete
-gate is:
+The orthogonal `input_active` flag is part of the target gate and suppresses
+automatic sending. The current bridge reports it as constant `false`, so that
+suppression is not a live-verified capability yet. The state gate is:
 
 | Session state | idle_only | working_allowed |
 | --- | --- | --- |
@@ -80,7 +81,7 @@ failed states.
 
 ## Schedule and operator dimensions
 
-The future timer contract is:
+The implemented timer contract is:
 
 ```text
 absent -> configured -> enabled -> due -> claimed

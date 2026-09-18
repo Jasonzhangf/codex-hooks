@@ -27,8 +27,8 @@ policy, request augmentation, and memory remain outside this implementation.
 
 The graph is intentionally split into three evidence classes:
 
-- **Implemented baseline**: event normalization, hook-kind routing, status and
-  input gating, idempotency, JSON persistence, outbox recovery, external Stop
+- **Implemented baseline**: event normalization, hook-kind routing, status
+  gating, idempotency, JSON persistence, outbox recovery, external Stop
   output, one-shot/recurring timer delivery, subagent create/list/stop,
   LongHorizon registration/control, Stopless goal review, operator-slot query,
   and exact delivery evidence progression.
@@ -61,7 +61,7 @@ flowchart TD
   L --> M[codexapp.session_status]
   M -->|unknown/disconnected| X5[fail closed; no send]
   M -->|idle and input inactive| N[send allowed]
-  M -->|manual input active| O[deferred; persist pending]
+  M -->|manual input active (target only)| O[deferred; persist pending]
   M -->|working + idle_only| O[deferred; persist pending]
   M -->|working + working_allowed| N
   M -->|stopping| O
@@ -92,7 +92,7 @@ flowchart TD
 | Daemon → codexapp | RouteCodex lifecycle | typed app-server target → capabilities | `connecting → capable` | namespace/appserver mismatch or unsupported capability |
 | Official event → adapter | hook adapter | stdin JSON → validated event | `received → classified` | malformed/unknown event; no daemon mutation |
 | Adapter → daemon | daemon RPC | event + optional intent → decision | event key recorded exactly once | duplicate returns recorded result |
-| Daemon → status | codexapp | target → nine states + orthogonal `input_active` | observation only | unknown/disconnected/failed is fail closed; input active defers |
+| Daemon → status | codexapp | target → nine states + orthogonal `input_active` | observation only | unknown/disconnected/failed is fail closed; active input deferral is a target contract because the current bridge reports `false` |
 | Status → send gate | daemon | intent mode + state → send/defer/fail | `created → deferred` or send path | working + `idle_only` never calls send |
 | Daemon → sendmessage | codexapp | target + body + attempt id → native receipt | `emitted → sending → accepted` | exact native error, no silent retry |
 | Stop send → hook result | Stop adapter | accepted send → ordinary official success JSON | current hook ends | `{}`; never claim native continuation |

@@ -1,8 +1,8 @@
 # RouteCodex Hooks Framework
 
 This repository is the runnable framework boundary for RouteCodex lifecycle
-hooks. It intentionally does not enable Stopless, memory, or goal mutation
-behavior.
+hooks. Stopless goal review, timer scheduling, and LongHorizon are opt-in.
+Memory and goal mutation remain outside the current surface.
 
 It is also a valid Codex plugin. The manifest is
 [`.codex-plugin/plugin.json`](.codex-plugin/plugin.json), and the official

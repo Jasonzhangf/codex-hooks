@@ -29,8 +29,8 @@ rccs schedule add recurring-1 <at-iso8601> '<body>' --session timer-tui --every 
 | `--target <namespace>/<appserver>` | required for subagent | Native target scope. |
 | `--once` | default | One-shot schedule. Mutually exclusive with `--every`. |
 | `--every <duration>` | none | Recurring interval: positive `ms`, `s`, `m`, `h`, or `d`. |
-| `--send-mode idle_only` | default | Defer while the target is working or input-active. |
-| `--send-mode working_allowed` | opt-in | Permit a working target only when explicitly selected; input-active still suppresses. |
+| `--send-mode idle_only` | default | Defer while the target is working. |
+| `--send-mode working_allowed` | opt-in | Permit a working target only when explicitly selected. |
 | `--busy-policy defer` | default | Keep one pending occurrence and flush it when eligible. |
 | `--busy-policy skip` | opt-in | Record a skipped occurrence and wait for the next interval; no backlog. |
 | `--action notify` | default | Queue the body to the bound session. |
@@ -41,7 +41,6 @@ rccs schedule add recurring-1 <at-iso8601> '<body>' --session timer-tui --every 
 | `--ephemeral` | true for subagent | Optional explicit assertion; subagent creation and subagent schedules always use an ephemeral thread. |
 | `--allow-concurrent` | false | Required for recurring subagent creation. |
 | `--owner-session <session-id>` | current session when available | Scope used by list/stop controls. |
-| `--profile <profile>` | rejected | Native `thread/start` has no Codex profile selector; rejection is explicit. |
 
 `defer` and `skip` are different state effects. `defer` persists one pending
 intent and can deliver later after the target becomes idle. `skip` records the
@@ -52,7 +51,9 @@ The daemon owns the persisted binding, schedule state, one-second clock, and
 delivery ledger. Missed recurring occurrences are coalesced: after downtime,
 the next tick sends one occurrence, then advances to the next future interval.
 The target session is checked before every notification; unknown, disconnected,
-failed, and missing sessions fail closed.
+failed, and missing sessions fail closed. The current native bridge reports
+`input_active` as `false`; do not rely on input-active suppression as a
+verified scheduling capability.
 
 ## Subagent schedules
 
@@ -71,9 +72,7 @@ Subagent schedules always use an ephemeral native thread; `--ephemeral` makes
 that fixed behavior explicit. Recurring subagent schedules require explicit
 `--allow-concurrent`. The receipt records the created thread and turn
 identities; no tmux text is used as a substitute for native creation.
-`--model` and `--effort` are forwarded to the native child. `--profile` is
-rejected explicitly because the current App Server `thread/start` boundary has
-no Codex configuration-profile selector.
+`--model` and `--effort` are forwarded to the native child.
 
 ## Waiting
 
@@ -97,16 +96,11 @@ schedules. `schedule stop <id>` is terminal and disables future firing.
 recurring task is no longer needed, ownership moved, the user asked to stop,
 or the session ended.
 
-## Send operation selection
+## Delivery behavior
 
-| Operation | Use only when | Never use when |
-| --- | --- | --- |
-| `queue` | Ordinary notification, wait wakeup, Stopless feedback, LongHorizon wake, or explicitly allowed working delivery. | Target is unknown/disconnected, input is active, or queue delivery is unavailable. |
-| `steer` | One live working turn exists and the caller explicitly requests same-turn correction with a matching turn identity. | Ordinary schedule text, stale/missing turn identity, idle target, or automatic retry. |
-| `interrupt` | Explicit user/control-plane stop, including `rccs subagent stop`. | Normal notification, retry, or replacing queue behavior. |
-
-Queue is the default. Steer and interrupt are never inferred from message text.
-An ordinary schedule cannot silently become an interrupt.
+Notification schedules and waits use native queue delivery. `rccs subagent
+stop` uses `turn/interrupt` for a working child. There is no separate `rccs`
+schedule operation that changes ordinary text into a different delivery mode.
 
 ## Subagent inspection
 
@@ -115,7 +109,8 @@ children. Stop one only through `rccs subagent stop <thread-id>`; the daemon
 checks native status and sends `turn/interrupt` with the registered
 `thread_id` and `turn_id` when a turn is working. An idle child records
 `no_active_turn`; an ephemeral child becomes `released`, otherwise it becomes
-`stopped`. Archive, delete, and close are not part of this path.
+`stopped`. `rccs subagent show` is registry-only and does not read the child's
+final result. Archive, delete, and close are not part of this path.
 
 ## LongHorizon
 
@@ -130,13 +125,12 @@ rccs longhorizon stop check
 ```
 
 `periodic` uses `busy_policy=skip`: a busy target skips the occurrence and the
-next interval is the next opportunity. For a Stop-triggered review, register
+next interval is the next opportunity. Its register form requires
+`--prompt`, `--session`, and `--every`; `--at` is optional.
+
+For a Stop-triggered review, register
 `--mode goal --goal-file <path> --session <alias>` and activate it. Goal review
 is disabled until activation and can be paused or stopped with the same
-LongHorizon commands.
-
-## Request/schema injection
-
-Request/schema injection is outside the official Hook surface and is currently
-`blocked`. Do not encode request augmentation as a schedule body or pretend a
-message is a schema/tool injection.
+LongHorizon commands. `--review-budget` and `--owner-session` are optional.
+The current CLI supports `register`, `list`, `show`, `activate`, `pause`,
+`stop`, and `remove`; it does not expose a separate update or resume command.

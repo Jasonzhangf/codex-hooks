@@ -21,9 +21,10 @@ separate message body; the body cannot override them.
 
 `RunningState` is one of `unknown`, `starting`, `working`, `idle`,
 `waiting_for_input`, `stopping`, `stopped`, `disconnected`, or `failed`, plus
-the orthogonal `input_active` observation. `SendMessageResult` distinguishes
-`accepted`, `delivered`, `failed`, and `unknown` rather than returning a
-boolean.
+the orthogonal `input_active` observation. The current local bridge reports
+`input_active` as constant `false`; consuming real input state remains a
+target contract. `SendMessageResult` distinguishes `accepted`, `delivered`,
+`failed`, and `unknown` rather than returning a boolean.
 
 ## Local CodexApp evidence
 
@@ -33,7 +34,8 @@ the real local contract `codex-comm/v1`:
 - namespaces: `codex_tui` and `codex_app`;
 - query methods: discovery, session listing/status, message status,
   capabilities, and bridge status;
-- execution methods: register, send, wait, reply, and ACK;
+- execution methods: register, send, steer, create subagent, interrupt, and
+  reply/ACK routing;
 - native App Server adapter: Unix WebSocket JSON-RPC;
 - shared bridge: Unix JSON-lines control socket with a durable journal.
 
@@ -41,6 +43,12 @@ The bridge README explicitly says MCP is query-only; CLI owns registration and
 execution. `send` is routed through the bridge and `session_status` is
 observed from the App Server. Its six automated tests pass, including
 bidirectional routing and reply correlation.
+
+The bridge can advertise `steer_message`, `create_subagent`,
+`interrupt_turn`, and `read_subagent_result`, but that does not make each one
+an `rccs` CLI command. The current `rccs` surface exposes queue send, subagent
+create/list/show/stop, and `turn/interrupt` through `subagent stop`; steer and
+direct result reads remain internal bridge/policy operations.
 
 ## Adapter isolation
 

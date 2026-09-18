@@ -55,15 +55,16 @@ with a fresh state store and cannot import another operator's state module.
 
 | Operator | Input | Current status | Future responsibility |
 | --- | --- | --- | --- |
-| Stopless | `Stop`/`SubagentStop` | contract slot only | loop guard policy, if explicitly enabled later |
+| Stopless | `Stop`/`SubagentStop` | implemented goal review, disabled until a LongHorizon goal record is activated | loop guard policy through the explicit goal record |
 | Timer | daemon clock/CLI schedule | implemented, opt-in | due/claim/defer/send |
 | UpdateGoal | `PreToolUse`/`PostToolUse` matcher `update_goal` | classification only | independent goal update policy |
-| LongHorizon | future checkpoint event | extension slot | durable wake condition |
+| LongHorizon | daemon clock or `Stop` | implemented periodic/goal modes, opt-in | durable wake condition and goal review |
 | Memory | input/stop/tool boundaries | extension slot only | context injection/extraction/writeback |
 
-The baseline has no product factory that enables Stopless, update-goal, or
-Memory behavior. Timer is enabled only by `schedule-add`, which resolves an
-explicit session binding and persists the schedule in hooksd.
+The product factory enables Stopless only after an explicit LongHorizon goal
+record is activated. Timer is enabled only by `schedule-add`, which resolves an
+explicit session binding and persists the schedule in hooksd. Update-goal and
+Memory remain boundary-only.
 
 ## CLI/MCP separation
 

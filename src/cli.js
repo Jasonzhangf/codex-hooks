@@ -97,6 +97,10 @@ if (operation === "--help" || operation === "-h") {
 }
 
 async function sessionCommand(args) {
+  if (hasHelp(args)) {
+    printHelp(sessionHelp());
+    return;
+  }
   const [subcommand, ...rest] = args;
   if (subcommand === "bind") {
     const record = readInstallRecord();
@@ -135,7 +139,6 @@ async function scheduleCommand(args) {
       "--once",
       "--action",
       "--cwd",
-      "--profile",
       "--model",
       "--effort",
       "--ephemeral",
@@ -159,7 +162,6 @@ async function scheduleCommand(args) {
       ...(options.busy_policy ? { busy_policy: options.busy_policy } : {}),
       ...(options.every ? { interval_ms: parseDuration(options.every) } : {}),
       ...(options.cwd ? { cwd: options.cwd } : {}),
-      ...(options.profile ? { profile: options.profile } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
       ...(options.ephemeral === true ? { ephemeral: true } : {}),
@@ -202,7 +204,6 @@ async function scheduleCommand(args) {
       "--once",
       "--action",
       "--cwd",
-      "--profile",
       "--model",
       "--effort",
       "--ephemeral",
@@ -222,7 +223,6 @@ async function scheduleCommand(args) {
       ...(options.every ? { interval_ms: parseDuration(options.every) } : {}),
       ...(options.action ? { action: options.action } : {}),
       ...(options.cwd ? { cwd: options.cwd } : {}),
-      ...(options.profile ? { profile: options.profile } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
       ...(options.ephemeral === true ? { ephemeral: true } : {}),
@@ -320,7 +320,6 @@ async function subagentCommand(args) {
     const options = parseOptions(rest.slice(1), [
       "--target",
       "--cwd",
-      "--profile",
       "--model",
       "--effort",
       "--ephemeral",
@@ -332,7 +331,6 @@ async function subagentCommand(args) {
       prompt: required(rest[0], "subagent prompt"),
       target: parseTargetIdentity(required(options.target, "--target")),
       ...(options.cwd ? { cwd: options.cwd } : {}),
-      ...(options.profile ? { profile: options.profile } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
       ephemeral: true,
@@ -371,6 +369,10 @@ async function subagentCommand(args) {
 }
 
 function configCommand(args) {
+  if (hasHelp(args)) {
+    printHelp(configHelp());
+    return;
+  }
   const [subcommand, ...rest] = args;
   if (subcommand === "show") {
     const record = readInstallRecord();
@@ -386,6 +388,10 @@ function configCommand(args) {
 }
 
 function hookCommand(args) {
+  if (hasHelp(args)) {
+    printHelp(hookHelp());
+    return;
+  }
   const [subcommand, name] = args;
   if (subcommand !== "enable" && subcommand !== "disable") throw new Error("usage: rccs hook enable|disable stop");
   if (required(name, "hook name") !== "stop") throw new Error(`unsupported hook: ${name}`);
@@ -393,18 +399,30 @@ function hookCommand(args) {
 }
 
 function supervisorCommand(args) {
+  if (hasHelp(args)) {
+    printHelp(supervisorHelp());
+    return;
+  }
   const [subcommand] = args;
   if (subcommand !== "enable" && subcommand !== "disable") throw new Error("usage: rccs supervisor enable|disable");
   print(setSupervisorEnabled(readInstallRecord(), subcommand === "enable"));
 }
 
 async function operatorCommand(args) {
+  if (hasHelp(args)) {
+    printHelp(operatorHelp());
+    return;
+  }
   const [subcommand, name] = args;
   if (subcommand !== "enable" && subcommand !== "disable") throw new Error("usage: rccs operator enable|disable <name>");
   await mutate({ operation: "operator.set_enabled", name: required(name, "operator name"), enabled: subcommand === "enable" });
 }
 
 async function longHorizonCommand(args) {
+  if (hasHelp(args)) {
+    printHelp(longHorizonHelp());
+    return;
+  }
   const [subcommand, ...rest] = args;
   if (subcommand === "register") {
     const options = parseOptions(rest.slice(1), [
@@ -462,7 +480,24 @@ async function longHorizonCommand(args) {
 }
 
 function usage() {
-  return "usage: rccs init | rccs status | rccs session bind|unbind ... | rccs schedule add|list|show|update|remove|pause|resume|stop ... | rccs wait <duration> [body] [--async] | rccs subagent create|list|show|stop ... | rccs longhorizon register|list|show|activate|pause|stop|remove ... | rccs mcp register ... | rccs config show|set ... | rccs hook enable|disable stop | rccs supervisor enable|disable | rccs operator enable|disable <name>";
+  return `
+usage:
+  rccs init [--codex-home <path>] [--bin-dir <path>] [--agent-home <path>] [--endpoint <http-origin>]
+  rccs status
+  rccs session bind <alias> <session-id> [--target <namespace>/<appserver>] [--replace]
+  rccs session unbind <alias>
+  rccs schedule add|list|show|update|remove|pause|resume|stop ...
+  rccs wait <duration> [body] [--async]
+  rccs subagent create|list|show|stop ...
+  rccs longhorizon register|list|show|activate|pause|stop|remove ...
+  rccs mcp register ...
+  rccs config show|set ...
+  rccs hook enable|disable stop
+  rccs supervisor enable|disable
+  rccs operator enable|disable <name>
+
+Use "rccs <command> --help" for side-effect-free command details.
+`;
 }
 
 function hasHelp(args) {
@@ -491,7 +526,6 @@ options:
   --busy-policy defer|skip       default defer; skip records one skipped occurrence
   --action notify|subagent       default notify
   --cwd <absolute-path>          subagent working directory
-  --profile <profile>            rejected: native create_subagent has no profile selector
   --model <model>                subagent model override
   --effort <effort>              subagent effort override
   --ephemeral                    optional assertion; subagent schedules always use an ephemeral thread
@@ -539,7 +573,6 @@ usage:
 options:
   --target <namespace>/<appserver> required native target scope
   --cwd <absolute-path>            child working directory
-  --profile <profile>              rejected: native create_subagent has no profile selector
   --model <model>                  child model override
   --effort <effort>                child effort override
   --ephemeral                      create a disposable native thread
@@ -567,6 +600,99 @@ options:
 notes:
   MCP is read-only. Use the routecodex_hooks_status tool for health, schedules,
   bindings, subagents, LongHorizon state, and unresolved delivery evidence.
+`;
+}
+
+function sessionHelp() {
+  return `
+usage:
+  rccs session bind <alias> <session-id> [options]
+  rccs session unbind <alias>
+
+options:
+  --target <namespace>/<appserver>  configured target when multiple are present
+  --namespace <namespace>           configured namespace selector
+  --appserver <appserver-id>        configured App Server selector
+  --replace                         replace an existing alias binding
+
+notes:
+  bind resolves and persists the target at registration time.
+  unbind removes only the named alias.
+`;
+}
+
+function configHelp() {
+  return `
+usage:
+  rccs config show
+  rccs config set <key> <value>
+
+keys:
+  endpoint          loopback daemon endpoint, for example http://127.0.0.1:8787
+  codexapp_socket   CodexApp bridge Unix socket path
+  source_scope      source scope id
+  source_session    source session id
+  target_scope      <namespace/appserver>=<scope-id>
+  target            target JSON with namespace, appserver_id, scope_id, endpoint
+`;
+}
+
+function hookHelp() {
+  return `
+usage:
+  rccs hook enable stop
+  rccs hook disable stop
+
+notes:
+  The current hook surface manages only the official Stop hook.
+`;
+}
+
+function supervisorHelp() {
+  return `
+usage:
+  rccs supervisor enable
+  rccs supervisor disable
+
+notes:
+  Enables or disables the RouteCodex-managed CodexApp -> hooksd supervisor.
+`;
+}
+
+function operatorHelp() {
+  return `
+usage:
+  rccs operator enable <name>
+  rccs operator disable <name>
+
+notes:
+  Operator names are listed by rccs status. Only implemented operators can be enabled.
+`;
+}
+
+function longHorizonHelp() {
+  return `
+usage:
+  rccs longhorizon register <id> --mode periodic --prompt <text> --session <alias> --every <duration> [options]
+  rccs longhorizon register <id> --mode goal --goal-file <path> --session <alias> [options]
+  rccs longhorizon list [--global | --session <session-id>]
+  rccs longhorizon show <id>
+  rccs longhorizon activate|pause|stop|remove <id>
+
+options:
+  --mode periodic|goal            required mode
+  --prompt <text>                 periodic prompt
+  --goal-file <path>              goal document for goal mode
+  --session <alias>               bound target session
+  --every <duration>              periodic interval such as 5m or 1h
+  --at <ISO-8601>                 optional first periodic occurrence
+  --owner-session <session-id>    ownership scope for list/control
+  --review-budget <count>         optional goal review budget; default 1
+
+notes:
+  Records are registered paused and require explicit activation.
+  periodic uses busy_policy=skip.
+  The CLI does not expose a separate update or resume command.
 `;
 }
 

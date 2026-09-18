@@ -58,12 +58,17 @@ and the delivery plane sends the feedback message.
 ### Request Augmentation Plane
 
 Request augmentation runs after the complete tool list and system/developer
-context are assembled, and before the provider request is sent. It may:
+context are assembled, and before the provider request is sent. The target
+contract may:
 
 - inject or update tool schemas;
 - inject a feedback schema;
 - modify system or developer prompts;
-- attach model/profile/effort selection at the request boundary.
+- attach model/effort selection at the request boundary.
+
+This plane is design-only in the current release. No implemented Hook or
+`rccs` command provides provider request/schema injection or a Codex
+configuration-profile selector.
 
 This plane is separate from the delivery plane. Stopless daemon feedback is a
 message; stopless request/schema injection is part of request assembly. A hook
@@ -150,11 +155,11 @@ Every scheduled notification checks the target before dispatch:
 
 Subagent schedules use native `thread/start` and `turn/start`. This native
 boundary does not expose a Codex configuration-profile selector, so an
-explicit `--profile` is rejected rather than accepted and discarded. Explicit
-`model` and `effort` overrides may be applied without changing the caller's
-runtime state. Spawned subagents never inherit the caller's conversation
-context; they receive only the typed prompt, target scope, and explicit
-override fields.
+explicit profile selector is not part of the CLI surface and is rejected as an
+unsupported option. Explicit `model` and `effort` overrides may be applied
+without changing the caller's runtime state. Spawned subagents never inherit
+the caller's conversation context; they receive only the typed prompt, target
+scope, and explicit override fields.
 
 `rccs subagent stop` reads the native session state first. A working child is
 interrupted through `turn/interrupt` with its registered `thread_id` and
@@ -167,12 +172,12 @@ not part of the implemented surface.
 LongHorizon is a registered operator with two closed-loop modes. It is opt-in
 through `rccs` and can be stopped by an agent.
 
-Planned CLI surface:
+Current CLI surface:
 
 ```bash
 rccs longhorizon register <id> --mode periodic|goal ...
 rccs longhorizon activate <id>
-rccs longhorizon list|show|update|pause|resume|stop|remove <id>
+rccs longhorizon list|show|pause|stop|remove <id>
 ```
 
 ### Periodic inspection mode
@@ -191,8 +196,9 @@ when to use it:
 - the user has asked to stop;
 - the session ended.
 
-The stop command is explicit, reversible only by a new registration or resume
-where supported, and never fires another periodic message after it is issued.
+The stop command is explicit, terminal for the record, and never fires another
+periodic message after it is issued. The current CLI does not expose separate
+LongHorizon `update` or `resume` commands.
 
 ### Goal review mode
 
@@ -216,8 +222,9 @@ reviewer simply does not run and the Stop path remains explicit.
 2. Stop interception: Stop event -> stopless feedback intent.
 3. Tool-call interception: observe/allow/deny/delay.
 4. LongHorizon: registration, activation, periodic inspection, goal review.
-5. Request augmentation: schema, system prompt, model/profile/effort.
-6. Subagent profile snapshot and explicit overrides.
+5. Request augmentation: schema, system prompt, and model/effort selection.
+6. Subagent model/effort overrides; Codex profile selection remains blocked by
+   the native App Server boundary.
 
 Each phase must close its own tests, review, and live-entry evidence before
 the next phase claims production capability.

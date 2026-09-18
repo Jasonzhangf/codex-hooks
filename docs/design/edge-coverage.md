@@ -28,7 +28,7 @@ evidence.
 | 18 | multiple operators trigger together | operator registry + hooksd | keep operator ids and intents independent; shared gate only | one record per operator/intent | Contract |
 | 19 | Stopless and update-goal trigger together | separate operators | independent decisions; no cross-read or cross-write | separate state resources | Probe |
 | 20 | ordinary wake while working | hooksd gate | suppress/defer; zero CodexApp send calls | pending record and idle watcher | Probe |
-| 21 | user is manually typing | hooksd gate | defer even `working_allowed` | pending record; retry on inactive input | Probe |
+| 21 | user is manually typing | hooksd gate | target contract: defer even `working_allowed`; current bridge reports `input_active=false`, so this row is not live-verified | pending record; retry on inactive input | Target contract |
 | 22 | CodexApp unavailable | supervisor + hooksd | hooksd is not ready or fails closed | runtime failed/degraded | Contract |
 | 23 | Hook adapter unavailable | official hook runtime | non-zero hook result; no direct send | daemon state unchanged | Probe |
 | 24 | configuration malformed | config owner | refuse startup; no partial runtime | no hook-ready marker | Probe |

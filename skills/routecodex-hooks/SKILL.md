@@ -39,7 +39,12 @@ rccs hook enable stop
 `routecodex-hooks` remains installed as a compatibility alias. New usage
 should use `rccs`.
 
-CLI changes configuration and operator/schedule switches. MCP is query-only: register the installed wrapper once with `codex mcp add routecodex-hooks -- routecodex-hooks-mcp`, then use `routecodex_hooks_status` to read daemon health, Stop hook installation state, operators, and schedules. MCP must not be used to mutate state.
+CLI changes configuration and operator/schedule switches. MCP is query-only:
+register the installed wrapper once with
+`codex mcp add routecodex-hooks -- routecodex-hooks-mcp`, then use
+`routecodex_hooks_status` to read daemon health, Stop hook installation state,
+operators, bindings, schedules, subagents, LongHorizon state, goal reviews,
+stop suppression, and delivery evidence. MCP must not be used to mutate state.
 
 Refresh the installed CLI, hooks, and skills with `rccs init`; it copies the
 same `skills/` bundle to `~/.agent/skills` and `~/.codex/skills`, preserves the
@@ -56,9 +61,16 @@ Subagent schedules are registered as native children. `rccs subagent list`
 defaults to the current session and `--global` lists all children. Stopping a
 working child uses `turn/interrupt` with the registered `thread_id` and
 `turn_id`; an idle child records `no_active_turn`. Archive, delete, and close
-are not part of the stop path.
+are not part of the stop path. `rccs subagent show` returns the registry
+record only; a direct child-result read is not exposed as an `rccs` command.
 
-The hook receives official JSON on stdin and forwards it to hooksd. hooksd owns policy state, persistence, idempotency, running-state gating, and the send decision; codexapp is the only message sender. An idle-only intent is deferred while the target is working or input-active. Unknown or disconnected state fails closed. A Stop event with `stop_hook_active: true` is guarded before an intent is created.
+The hook receives official JSON on stdin and forwards it to hooksd. hooksd owns
+policy state, persistence, idempotency, running-state gating, and the send
+decision; codexapp is the only message sender. An idle-only intent is deferred
+while the target is working. Unknown or disconnected state fails closed. A
+Stop event with `stop_hook_active: true` is guarded before an intent is
+created. The current bridge reports `input_active` as `false`; do not rely on
+input-active suppression as a verified framework capability.
 
 The installed `routecodex-hooksd` wrapper is the daemon process entry for the
 RouteCodex lifecycle supervisor. It must be started with the
@@ -73,12 +85,12 @@ ready, and its shutdown order is hooksd → CodexApp.
 
 An internal `codexapp.sendmessage` wake and official Stop `decision: "block"` are mutually exclusive. The send path returns ordinary successful hook output and does not claim delivery or execution. Do not use `continue: false` as delivery evidence. A non-zero hook exit means the daemon rejected or could not safely process the event.
 
-This framework implements the official Stop hook path, daemon state/persistence
-boundaries, CodexApp bridge contract, `rccs` configuration/switch controls, MCP
-read-only status, one-shot and recurring notification delivery, occurrence
-coalescing, native subagent creation/stop, Stopless goal review, and
-LongHorizon periodic/goal registration. Update-goal mutation and memory
-behavior remain outside this Stage 2 surface.
+This framework implements the official Stop hook path, daemon
+state/persistence boundaries, CodexApp bridge contract, `rccs`
+configuration/switch controls, MCP read-only status, one-shot and recurring
+notification delivery, occurrence coalescing, native subagent creation/stop,
+Stopless goal review, and LongHorizon periodic/goal registration. Update-goal
+mutation and memory behavior remain outside this Stage 2 surface.
 RouteCodex-managed sidecar startup is implemented by the RouteCodex lifecycle
 integration; the hooks repository's tests do not replace RouteCodex live
 lifecycle evidence.

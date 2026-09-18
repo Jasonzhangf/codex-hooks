@@ -49,14 +49,14 @@ This ledger separates implemented source edges from remaining boundaries.
 | Status gate matrix | implemented | keep [`state-machine.md`](state-machine.md) as the gate reference |
 | Coalescing missed occurrences | implemented | keep one occurrence per catch-up window |
 | Automatic delivery reconciliation | implemented | daemon-owned polling through `codexapp.message_status` |
-| Subagent creation through `thread/start` and `turn/start` | implemented for schedules | expose `rccs subagent create` with a fresh, isolated thread |
-| Subagent list | registry projection exists | define fields, state normalization, and filters |
+| Subagent creation through `thread/start` and `turn/start` | implemented | `rccs subagent create` uses a fresh, isolated thread |
+| Subagent list/show | registry projection implemented | list returns registry records; `show` is registry-only |
 | Subagent stop | implemented | `turn/interrupt` with registered thread/turn; no close/archive |
 | Read-only MCP server | implemented | keep `routecodex_hooks_status` as the only tool |
 | Idempotent MCP registration | implemented | `rccs mcp register` is called by `rccs init` |
 | Skill installation | implemented into `~/.codex/skills` and `~/.agent/skills` | keep idempotent and document every parameter in the skill |
 | Stopless Stop policy | implemented; `intentFactory` is wired in `daemon-entry.js` behind a disabled-by-default LongHorizon goal record |
-| Request/schema augmentation | no official Hook capability | mark schema injection blocked; use only the official context surface |
+| Request/schema augmentation | design-only | no `rccs` command or implemented request-boundary extension |
 | LongHorizon periodic mode | implemented | paused recurring schedule with skip-while-busy behavior |
 | LongHorizon goal mode | implemented | reviewer protocol on Stop with user-interrupt suppression |
 
@@ -118,7 +118,6 @@ rccs schedule add <id> <at> <body>
   [--once | --every <duration>]
   [--send-mode idle_only|working_allowed]
   [--busy-policy defer|skip]
-  [--expires-at <iso8601>]
   [--action notify|subagent]
   [--cwd <absolute-path>]
   [--model <model>]
@@ -162,7 +161,6 @@ CLI source comments must not become a second specification.
 rccs subagent create <prompt>
   --target <namespace>/<appserver>
   [--cwd <absolute-path>]
-  [--profile <profile>]
   [--model <model>]
   [--effort <effort>]
   [--ephemeral]
@@ -176,7 +174,8 @@ rccs subagent stop <thread-id>
 The default `subagent create` path uses a fresh thread and does not inherit the
 caller's conversation context. `--ephemeral` maps to native
 `thread/start { ephemeral: true }`. The registry records the native thread and
-turn identities, the target, the profile snapshot, and the creation receipt.
+turn identities, the target, and the creation receipt. It does not record a
+profile snapshot.
 
 `subagent stop` is the only stop operation. It never calls `thread/archive`,
 `thread/delete`, or a simulated close operation. The stop contract is defined
@@ -204,8 +203,8 @@ SendRequest
 
 | Operation | Native operation | Use only when | Never use when |
 | --- | --- | --- | --- |
-| `queue` | `thread/queue/add` through the typed CodexApp port | ordinary notification, wait wakeup, Stopless feedback, or explicitly allowed working delivery | target is unknown/disconnected, input is active, or an ephemeral thread cannot accept queued submissions |
-| `steer` | `turn/steer` | one live working turn exists, the intent is a same-turn correction, and the caller explicitly selects steer | the turn identity is absent, the session is not working, or the intent is an ordinary scheduled notification |
+| `queue` | `thread/queue/add` through the typed CodexApp port | ordinary notification, wait wakeup, Stopless feedback, or explicitly allowed working delivery | target is unknown/disconnected or an ephemeral thread cannot accept queued submissions |
+| `steer` | `turn/steer` | internal bridge/policy operation only: one live working turn exists, the intent is a same-turn correction, and the policy explicitly selects steer | there is no current `rccs` CLI command for steer; the turn identity is absent, the session is not working, or the intent is an ordinary scheduled notification |
 | `interrupt` | `turn/interrupt` | an explicit user or control-plane stop request, including subagent stop | delivering a normal message, retrying a failed send, or automatically replacing queue delivery |
 
 Queue is the default. Steer and interrupt are never inferred from message text.
@@ -218,7 +217,7 @@ The status gate is the matrix in
 
 | Observation | `idle_only` | `working_allowed` |
 | --- | --- | --- |
-| `input_active=true` | defer, never inject while the user is typing | defer, never inject while the user is typing |
+| `input_active=true` | target contract: defer; not live-verified because the current bridge reports `false` | target contract: defer; not live-verified because the current bridge reports `false` |
 | `working` | `busy_policy=defer` persists one pending intent; `busy_policy=skip` records a skipped occurrence and schedules the next interval | queue once; use steer only with an explicit steer request and a live turn identity |
 | `starting` or `stopping` | defer | defer |
 | `unknown`, `disconnected`, or `failed` | fail closed | fail closed |
@@ -345,10 +344,10 @@ fresh and isolated:
   reports success.
 
 The native App Server boundary used by this release does not expose a Codex
-configuration-profile selector on `thread/start`. A requested `--profile` is
-therefore rejected explicitly at the schedule/subagent registration boundary;
-it is never accepted and discarded. `model` and `effort` remain explicit
-per-child overrides when the native boundary accepts them.
+configuration-profile selector on `thread/start`. A profile selector is
+therefore not part of the `rccs` CLI surface; an unsupported profile option is
+rejected explicitly and is never accepted and discarded. `model` and `effort`
+remain explicit per-child overrides when the native boundary accepts them.
 
 ### 8.2 List fields
 
@@ -439,7 +438,8 @@ The skills document:
 
 - every schedule and wait parameter, including default value and state effect;
 - the difference between `defer` and `skip`;
-- when `steer`, `queue`, and `interrupt` are legal;
+- the current delivery surface: `queue` for schedules/waits, `interrupt` only
+  for `subagent stop`, and no `rccs` CLI steer command;
 - how to stop a schedule and when an agent should stop it;
 - how to list and stop subagents;
 - that MCP is read-only;
@@ -472,14 +472,14 @@ Stopless has two separate planes:
 
 | Plane | Owner | Mechanism | Current feasibility |
 | --- | --- | --- | --- |
-| Delivery feedback | Stopless policy + delivery plane | typed `MessageIntent` through CodexApp `thread/queue/add` | feasible |
-| Request/schema augmentation | request assembly owner | request-boundary injection after complete tool and context assembly | blocked by the official Hook contract |
+| Delivery feedback | Stopless policy + delivery plane | typed `MessageIntent` through CodexApp `thread/queue/add` | implemented |
+| Request/schema augmentation | request assembly owner | request-boundary injection after complete tool and context assembly | design-only; no current Hook or `rccs` implementation |
 
-The official Hook surface can provide `additionalContext` on
-`SessionStart` and `UserPromptSubmit`. It cannot modify the complete provider
-request, add arbitrary tool schemas, or rewrite the final system prompt.
-Without modifying Codex or owning a request-boundary extension, schema
-injection is `blocked`. It must not be simulated through message text.
+The official Hook surface can provide `additionalContext` on `SessionStart`
+and `UserPromptSubmit`. It cannot modify the complete provider request, add
+arbitrary tool schemas, or rewrite the final system prompt. Without modifying
+Codex or owning a request-boundary extension, schema injection remains
+design-only. It must not be simulated through message text.
 
 ### 11.3 Goal reviewer protocol
 

@@ -108,7 +108,7 @@ The candidate is eligible for review only when:
   `turn/interrupt` evidence and no post-stop work;
 - MCP current-session and global queries are both verified;
 - the request augmentation report explicitly marks schema injection
-  `blocked`.
+  `design-only`.
 
 Missing live evidence makes the candidate `UNVERIFIED`, not failed and not
 passed.
@@ -434,7 +434,7 @@ present:
 - independent tmux schedule replay with native receipt and TUI marker;
 - ephemeral subagent creation/list/stop with `turn/interrupt` evidence;
 - MCP current-session and global query evidence;
-- explicit `blocked` status for request/schema injection;
+- explicit `design-only` status for request/schema injection;
 - remote push receipt when push is in scope.
 
 If any applicable item is missing, the report is `INCOMPLETE`.

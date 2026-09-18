@@ -79,6 +79,38 @@ test("rccs-recover rejects a tampered snapshot before changing live files", asyn
   }
 });
 
+test("rccs-recover rejects unlisted files before changing live files", async () => {
+  const home = await mkdtemp(join(tmpdir(), "rccs-recover-unlisted-"));
+  try {
+    const fixture = await createFixture(home);
+    assert.equal((await run("/bin/sh", [script, "backup", "--id", "snap-1"], { HOME: home })).code, 0);
+    await writeFile(join(fixture.rccHome, "config.toml"), "live-after-backup\n");
+    await writeFile(join(fixture.snapshotRoot, "snap-1", "config", "provider", "p1", "unlisted"), "injected\n");
+
+    const result = await run("/bin/sh", [script, "restore", "snap-1"], { HOME: home });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /snapshot contains unlisted entries/);
+    assert.equal(await readFile(join(fixture.rccHome, "config.toml"), "utf8"), "live-after-backup\n");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("rccs-recover refuses to create an incomplete snapshot", async () => {
+  const home = await mkdtemp(join(tmpdir(), "rccs-recover-incomplete-"));
+  try {
+    const fixture = await createFixture(home);
+    await rm(join(fixture.binDir, "rccv3-admin"));
+
+    const result = await run("/bin/sh", [script, "backup", "--id", "snap-1"], { HOME: home });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /required binary not found/);
+    assert.equal(await pathExists(join(fixture.snapshotRoot, "snap-1")), false);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("rccs-recover rejects a snapshot path outside the backup root", async () => {
   const home = await mkdtemp(join(tmpdir(), "rccs-recover-path-"));
   const external = await mkdtemp(join(tmpdir(), "rccs-recover-external-"));

@@ -61,6 +61,14 @@ hash_tree() {
   )
 }
 
+snapshot_files() {
+  directory=$1
+  (
+    cd "$directory"
+    find bin config aliases -mindepth 1 ! -type d -print | LC_ALL=C sort
+  )
+}
+
 snapshot_dir() {
   printf '%s/%s\n' "$BACKUP_ROOT" "$1"
 }
@@ -121,6 +129,12 @@ backup_command() {
     */*|.|..|'') fail "invalid snapshot id: $id" ;;
   esac
 
+  for name in rccv3 rccv3-admin rccv3-hooksd rccv3-codexapp; do
+    [ -f "$BIN_DIR/$name" ] || fail "required binary not found: $BIN_DIR/$name"
+  done
+  [ -L "$BIN_DIR/rcc" ] || fail "required alias not found: $BIN_DIR/rcc"
+  [ -L "$BIN_DIR/routecodex" ] || fail "required alias not found: $BIN_DIR/routecodex"
+
   _dst="$BACKUP_ROOT/$id"
   if [ -e "$_dst" ]; then
     base=$id
@@ -163,11 +177,19 @@ backup_command() {
 
 verify_snapshot() {
   directory=$1
+  expected=$(mktemp)
+  actual=$(mktemp)
+  trap 'rm -f "$expected" "$actual"' EXIT HUP INT TERM
+  awk '{print $2}' "$directory/manifest.sha256" | LC_ALL=C sort > "$expected"
+  snapshot_files "$directory" > "$actual"
+  cmp -s "$expected" "$actual" || fail "snapshot contains unlisted entries: $directory"
   if [ "$HASH_TOOL" = shasum ]; then
     (cd "$directory" && shasum -a 256 -c manifest.sha256) >/dev/null || fail "snapshot hash verification failed: $directory"
   else
     (cd "$directory" && sha256sum -c manifest.sha256) >/dev/null || fail "snapshot hash verification failed: $directory"
   fi
+  rm -f "$expected" "$actual"
+  trap - EXIT HUP INT TERM
 }
 
 list_command() {
@@ -301,6 +323,8 @@ require_command awk
 require_command cp
 require_command mv
 require_command date
+require_command mktemp
+require_command cmp
 
 command=${1:-}
 [ -n "$command" ] || {

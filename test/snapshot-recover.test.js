@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -98,6 +98,34 @@ test("rccs-recover rejects a snapshot whose config check fails", async () => {
   }
 });
 
+test("rccs-recover rollback removes paths that did not exist before restore", async () => {
+  const home = await mkdtemp(join(tmpdir(), "rccs-recover-rollback-"));
+  try {
+    const fixture = await createFixture(home);
+    assert.equal((await run("/bin/sh", [script, "backup", "--id", "snap-1"], { HOME: home })).code, 0);
+    await rm(join(fixture.rccHome, "provider"), { recursive: true });
+    await rm(join(fixture.rccHome, "secrets"), { recursive: true });
+    await rm(join(fixture.binDir, "rcc"));
+    await rm(join(fixture.binDir, "routecodex"));
+    await rm(join(fixture.binDir, "rccv3-admin"));
+
+    const result = await run("/bin/sh", [script, "restore", "snap-1"], {
+      HOME: home,
+      FAIL_LIVE_CONFIG_CHECK: "1",
+    });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /restored config check failed/);
+    assert.equal(await pathExists(join(fixture.rccHome, "provider")), false);
+    assert.equal(await pathExists(join(fixture.rccHome, "secrets")), false);
+    assert.equal(await pathExists(join(fixture.binDir, "rcc")), false);
+    assert.equal(await pathExists(join(fixture.binDir, "routecodex")), false);
+    assert.equal(await pathExists(join(fixture.binDir, "rccv3-admin")), false);
+    assert.equal(await readFile(join(fixture.rccHome, "config.toml"), "utf8"), "config-v1\n");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("rccs-recover does not require Node on PATH", async () => {
   const home = await mkdtemp(join(tmpdir(), "rccs-recover-no-node-"));
   try {
@@ -124,6 +152,11 @@ async function createFixture(home) {
 printf '%s\\n' "$*" >> '${logPath}'
 if [ "\${FAIL_CONFIG_CHECK:-}" = 1 ] && [ "$1" = config ] && [ "$2" = check ]; then
   exit 1
+fi
+if [ "\${FAIL_LIVE_CONFIG_CHECK:-}" = 1 ] && [ "$1" = config ] && [ "$2" = check ]; then
+  case "$*" in
+    */.rcc/config.toml) exit 1 ;;
+  esac
 fi
 if [ "$1" = --version ]; then
   printf 'rccv3 test\\n'
@@ -162,4 +195,13 @@ function run(command, args, extraEnv = {}) {
     child.on("error", reject);
     child.on("close", (code) => resolve({ code, stdout, stderr }));
   });
+}
+
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }

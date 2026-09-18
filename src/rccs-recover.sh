@@ -201,20 +201,21 @@ save_rollback() {
 replace_tree() {
   __rccs_src=$1
   __rccs_dst=$2
-  if [ ! -d "$__rccs_src" ]; then
-    return 0
-  fi
   __rccs_parent=$(dirname "$__rccs_dst")
   __rccs_name=$(basename "$__rccs_dst")
   __rccs_staging="$__rccs_parent/.$__rccs_name.rccs-recover.$$"
   __rccs_previous="$__rccs_parent/.$__rccs_name.rccs-recover-previous.$$"
   rm -rf "$__rccs_staging" "$__rccs_previous"
-  mkdir -p "$__rccs_staging"
-  cp -R "$__rccs_src/." "$__rccs_staging/"
+  __rccs_has_source=0
+  if [ -d "$__rccs_src" ]; then
+    __rccs_has_source=1
+    mkdir -p "$__rccs_staging"
+    cp -R "$__rccs_src/." "$__rccs_staging/"
+  fi
   if [ -d "$__rccs_dst" ]; then
     mv "$__rccs_dst" "$__rccs_previous"
   fi
-  if ! mv "$__rccs_staging" "$__rccs_dst"; then
+  if [ "$__rccs_has_source" -eq 1 ] && ! mv "$__rccs_staging" "$__rccs_dst"; then
     if [ -d "$__rccs_previous" ]; then
       mv "$__rccs_previous" "$__rccs_dst"
     fi
@@ -231,6 +232,8 @@ restore_tree() {
       cp -p "$source_root/bin/$name" "$temporary"
       chmod 755 "$temporary"
       mv -f "$temporary" "$BIN_DIR/$name"
+    else
+      rm -f "$BIN_DIR/$name"
     fi
   done
   if [ -f "$source_root/config/config.toml" ]; then
@@ -238,6 +241,8 @@ restore_tree() {
     temporary="$(dirname "$CONFIG_PATH")/.config.toml.rccs-recover.$$"
     cp -p "$source_root/config/config.toml" "$temporary"
     mv -f "$temporary" "$CONFIG_PATH"
+  else
+    rm -f "$CONFIG_PATH"
   fi
   replace_tree "$source_root/config/provider" "$PROVIDER_DIR"
   replace_tree "$source_root/config/secrets" "$SECRETS_DIR"
@@ -245,6 +250,8 @@ restore_tree() {
     if [ -f "$source_root/aliases/$name" ]; then
       target=$(cat "$source_root/aliases/$name")
       ln -sfn "$target" "$BIN_DIR/$name"
+    else
+      rm -f "$BIN_DIR/$name"
     fi
   done
 }

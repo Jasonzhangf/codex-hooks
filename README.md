@@ -133,6 +133,28 @@ copy can refresh itself and its skills without requiring the source checkout.
 Repeated runs are idempotent and preserve the current install target when no
 path flags are supplied.
 
+## Snapshot recovery
+
+`rccs-recover` is a standalone POSIX shell recovery entry that does not need
+Node, `rccs`, or the daemon. `rccs snapshot` delegates to it when the normal
+CLI is available:
+
+```bash
+rccs-recover backup
+rccs-recover list
+rccs-recover restore latest
+rccs snapshot backup
+rccs snapshot list
+rccs snapshot restore latest
+```
+
+Snapshots capture `rccv3`, its managed companion binaries, `config.toml`,
+`provider/`, `secrets/`, and the `rcc`/`routecodex` aliases. Restore verifies
+the manifest and config, saves a rollback snapshot, and uses the snapshot's
+`rccv3` to run `config check`, `restart`, and `status`. A failed validation or
+restart reapplies the pre-restore managed paths, including removing paths that
+did not exist before the restore.
+
 `rccs session bind` persists the alias-to-target mapping in hooksd;
 `rccs schedule add` resolves that alias and enables the timer operator. The
 daemon ticks once per second and sends due notifications through the same

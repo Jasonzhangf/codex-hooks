@@ -21,6 +21,7 @@ Only the following `rccs` capabilities are supported:
 | Daemon wait | `rccs wait <duration>` | native session status + queue send |
 | Subagent control | `rccs subagent create|list|show|stop` | native create/start/interrupt |
 | LongHorizon control | `rccs longhorizon register|list|show|activate|pause|stop|remove` | periodic schedule or Stop review |
+| Snapshot recovery | `rccs snapshot backup|list|restore`; standalone `rccs-recover` | local binaries/config/provider/secrets/aliases |
 | MCP registration | `rccs mcp register` | read-only MCP wrapper |
 | Configuration and switches | `rccs config`, `rccs hook`, `rccs supervisor`, `rccs operator` | local installation/config state |
 
@@ -50,8 +51,8 @@ unrelated hook entries, and removes only the retired managed Skill directories
 managed Skill installed by this repository is `rccs`.
 
 The installer creates the daemon configuration and executable CLI, MCP,
-daemon, supervisor, and CodexApp wrappers. It registers only the managed
-official Stop hook and preserves unrelated entries in `hooks.json`.
+daemon, supervisor, CodexApp, and recovery wrappers. It registers only the
+managed official Stop hook and preserves unrelated entries in `hooks.json`.
 
 MCP exposes `routecodex_hooks_status` as a read-only daemon status tool. Use it
 to read health, operators, bindings, schedules, subagents, LongHorizon state,
@@ -64,6 +65,28 @@ Every documented command group supports side-effect-free
 For an isolated install, pass `--codex-home`, `--agent-home`, `--bin-dir`, and
 `--endpoint`. The installed `routecodex-hooks` command remains a compatibility
 alias; new usage should use `rccs`.
+
+## Snapshot recovery
+
+Use the standalone `rccs-recover` command when `rccs` or `rccv3` is broken.
+It is a POSIX shell script and does not require Node or the daemon:
+
+```sh
+rccs-recover backup
+rccs-recover list
+rccs-recover restore latest
+rccs-recover restore 20260918T120000Z
+```
+
+`rccs snapshot backup|list|restore` is the same operation through the managed
+`rccs` wrapper. Snapshots include `rccv3`, `rccv3-admin`, `rccv3-hooksd`,
+`rccv3-codexapp`, `config.toml`, `provider/`, `secrets/`, and the `rcc` /
+`routecodex` alias targets under `~/.rcc/state/backups/rcc-snapshots`.
+`restore` verifies the snapshot hashes and config, saves a rollback snapshot,
+then uses the snapshot's `rccv3` for `config check`, `restart`, and `status`.
+It is transactional for the managed paths: a failed validation or restart
+reapplies the previous binaries, config, provider, secrets, and aliases.
+`RCCS_SNAPSHOT_ROOT`, `RCCS_BIN_DIR`, and `RCC_HOME` may override defaults.
 
 Inspect or change local configuration with:
 

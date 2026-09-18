@@ -11,7 +11,7 @@ route reached native receipt/execution/reply/read evidence.
 
 | Requirement | Authoritative evidence | Status |
 | --- | --- | --- |
-| Skills teach install/config/status | `skills/routecodex-hooks/SKILL.md`, `skills/scheduling/SKILL.md` | pass |
+| One installed Skill teaches install/config/status | `skills/rccs/SKILL.md` | pass |
 | MCP is query-only | `src/mcp-server.js`, `test/mcp.test.js`, CLI/MCP boundary tests | pass |
 | CLI owns mutations | `src/cli.js`, `src/control.js`, `test/control.test.js` | pass |
 | Official event adapters | `hooks/hooks.json`, `contracts/hook-event.schema.json`, manifest test | pass |

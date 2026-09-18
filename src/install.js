@@ -6,6 +6,7 @@ import { normalizeLoopbackEndpoint } from "./endpoint.js";
 export const INSTALL_SCHEMA_VERSION = 1;
 export const INSTALL_DIRNAME = "routecodex-hooks";
 export const MANAGED_HOOK_ID = "rccs.stop.v1";
+const RETIRED_MANAGED_SKILLS = ["routecodex-hooks", "scheduling", "stopless", "update-goal"];
 
 export function installPaths({
   codexHome = join(homedir(), ".codex"),
@@ -72,6 +73,9 @@ export function installFromSource({
   copyDirectory(join(source, "skills"), paths.bundledSkillsDirectory);
   copyDirectory(join(source, "skills"), paths.skillsDirectory);
   copyDirectory(join(source, "skills"), paths.agentSkillsDirectory);
+  pruneRetiredManagedSkills(paths.bundledSkillsDirectory);
+  pruneRetiredManagedSkills(paths.skillsDirectory);
+  pruneRetiredManagedSkills(paths.agentSkillsDirectory);
   ensureDirectory(paths.configDirectory);
   ensureDirectory(paths.stateDirectory);
   writeJson(paths.codexappTargets, readJsonIfExists(previous?.codexapp_targets) || []);
@@ -206,6 +210,12 @@ function copyDirectory(source, destination) {
   if (!fs.existsSync(source)) throw new Error(`source directory does not exist: ${source}`);
   if (samePath(source, destination)) return;
   fs.cpSync(source, destination, { recursive: true, force: true });
+}
+
+function pruneRetiredManagedSkills(skillsDirectory) {
+  for (const name of RETIRED_MANAGED_SKILLS) {
+    fs.rmSync(join(skillsDirectory, name), { recursive: true, force: true });
+  }
 }
 
 function samePath(left, right) {

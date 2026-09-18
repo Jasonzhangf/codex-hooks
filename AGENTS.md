@@ -25,4 +25,7 @@ through hooksd session bindings and schedules; no product policy enables it
 implicitly. `rccs` is the user-facing CLI. One-shot and recurring
 notifications are coalesced before delivery. Native subagent creation uses the
 App Server `thread/start` and `turn/start` operations; tmux text is never a
-substitute.
+substitute. The only managed Skill installed by this repository is `rccs`;
+`rccs init` is the installer for the single Skill and does not install
+`routecodex-hooks`, `scheduling`, `stopless`, or `update-goal` as separate
+managed Skill entries.

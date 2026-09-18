@@ -152,7 +152,7 @@ the daemon until a terminal schedule state. `--async` registers the wait and
 returns immediately. Agents must use this command for waits of one minute or
 more instead of polling.
 
-Parameter semantics belong in the installed `scheduling` and `rccs` skills.
+Parameter semantics belong in the installed `rccs` Skill.
 CLI source comments must not become a second specification.
 
 ### 4.3 Subagents
@@ -424,17 +424,20 @@ entries.
 
 ## 10. Skill installation
 
-`rccs init` installs the bundled skills into both:
+`rccs init` installs the single bundled `rccs` Skill into both:
 
 ```text
 ~/.codex/skills/<skill-name>/SKILL.md
 ~/.agent/skills/<skill-name>/SKILL.md
 ```
 
-The installation is idempotent. Managed skill files may be refreshed on every
-init; unrelated files and unrelated skill directories are preserved.
+The installation is idempotent. The managed Skill file may be refreshed on
+every init; unrelated files and unrelated Skill directories are preserved.
+The installer also removes only the retired managed Skill directories
+`routecodex-hooks`, `scheduling`, `stopless`, and `update-goal` from the
+installed skill roots, so the repository owns one Skill after refresh.
 
-The skills document:
+The Skill documents:
 
 - every schedule and wait parameter, including default value and state effect;
 - the difference between `defer` and `skip`;

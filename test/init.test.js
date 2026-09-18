@@ -22,7 +22,7 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
     assert.equal(first.stop_hook_enabled, true);
     assert.equal(first.source_root, process.cwd());
     assert.equal(fs.existsSync(join(first.source_directory, "hook-entry.js")), true);
-    assert.equal(fs.existsSync(join(first.skills_directory, "routecodex-hooks", "SKILL.md")), true);
+    assert.equal(fs.existsSync(join(first.skills_directory, "rccs", "SKILL.md")), true);
     assert.equal(fs.existsSync(join(first.agent_skills_directory, "rccs", "SKILL.md")), true);
     assert.equal(fs.statSync(first.rccs_wrapper).mode & 0o111, 0o111);
     assert.equal(fs.statSync(first.cli_wrapper).mode & 0o111, 0o111);
@@ -31,8 +31,8 @@ test("init installs local source, skills, wrappers, and one managed Stop hook id
     assert.equal(fs.statSync(first.supervisor_wrapper).mode & 0o111, 0o111);
     assert.equal(fs.statSync(first.codexapp_wrapper).mode & 0o111, 0o111);
     assert.equal(
-      await readFile(join(first.skills_directory, "routecodex-hooks", "SKILL.md"), "utf8"),
-      await readFile(join(process.cwd(), "skills", "routecodex-hooks", "SKILL.md"), "utf8"),
+      await readFile(join(first.skills_directory, "rccs", "SKILL.md"), "utf8"),
+      await readFile(join(process.cwd(), "skills", "rccs", "SKILL.md"), "utf8"),
     );
     assert.equal((await readFile(first.cli_wrapper, "utf8")).includes(first.source_directory), true);
     assert.equal((await readFile(first.rccs_wrapper, "utf8")).includes(first.source_directory), true);
@@ -101,7 +101,8 @@ test("rccs init reinstalls the bundled source and skills idempotently", async ()
     assert.equal(firstReceipt.initialized, true);
     assert.equal(firstReceipt.mcp_registration.state, "registered");
     assert.equal(fs.existsSync(join(firstReceipt.agent_skills_directory, "rccs", "SKILL.md")), true);
-    assert.equal(fs.existsSync(join(firstReceipt.bundled_skills_directory, "scheduling", "SKILL.md")), true);
+    assert.equal(fs.existsSync(join(firstReceipt.bundled_skills_directory, "rccs", "SKILL.md")), true);
+    assert.equal(fs.existsSync(join(firstReceipt.bundled_skills_directory, "scheduling", "SKILL.md")), false);
 
     const second = await run(firstReceipt.rccs_wrapper, ["init"], { env: { ...process.env, CODEX_HOME: codexHome } });
     assert.equal(second.code, 0, second.stderr);
@@ -112,6 +113,42 @@ test("rccs init reinstalls the bundled source and skills idempotently", async ()
     assert.equal(secondReceipt.endpoint, firstReceipt.endpoint);
     assert.equal(secondReceipt.stop_hook_enabled, true);
     assert.equal(secondReceipt.mcp_registration.state, "already_registered");
+  } finally {
+    await rm(codexHome, { recursive: true, force: true });
+  }
+});
+
+test("init prunes only retired managed skills and preserves unrelated skills", async () => {
+  const codexHome = await mkdtemp(join(tmpdir(), "rccs-skill-prune-"));
+  const binDir = join(codexHome, "bin");
+  const agentHome = join(codexHome, "agent");
+  const codexSkills = join(codexHome, "skills");
+  const agentSkills = join(agentHome, "skills");
+  try {
+    for (const root of [codexSkills, agentSkills]) {
+      for (const name of ["routecodex-hooks", "scheduling", "stopless", "update-goal"]) {
+        fs.mkdirSync(join(root, name), { recursive: true });
+        await writeFile(join(root, name, "SKILL.md"), `${name}\n`, "utf8");
+      }
+      fs.mkdirSync(join(root, "unrelated"), { recursive: true });
+      await writeFile(join(root, "unrelated", "SKILL.md"), "unrelated\n", "utf8");
+    }
+
+    const receipt = installFromSource({
+      sourceRoot: process.cwd(),
+      codexHome,
+      binDir,
+      agentHome,
+      endpoint: "http://127.0.0.1:9876",
+    });
+
+    for (const root of [receipt.skills_directory, receipt.agent_skills_directory]) {
+      assert.equal(fs.existsSync(join(root, "rccs", "SKILL.md")), true);
+      for (const name of ["routecodex-hooks", "scheduling", "stopless", "update-goal"]) {
+        assert.equal(fs.existsSync(join(root, name)), false);
+      }
+      assert.equal(await readFile(join(root, "unrelated", "SKILL.md"), "utf8"), "unrelated\n");
+    }
   } finally {
     await rm(codexHome, { recursive: true, force: true });
   }

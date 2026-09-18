@@ -284,12 +284,14 @@ node src/cli.js init --codex-home "$CODEX_HOME" \
 find "$CODEX_HOME/skills" "$RCCS_AGENT_HOME/skills" -name SKILL.md -print | sort
 ```
 
-Precondition: both skill roots are empty except for one unrelated skill file
-created by the test.
+Precondition: both skill roots contain one unrelated skill file and the
+retired managed directories `routecodex-hooks`, `scheduling`, `stopless`, and
+`update-goal`.
 
-Expected state: managed skills exist in both roots; the unrelated file is
-preserved; a second init does not duplicate files or hook entries; skill
-content includes parameter semantics.
+Expected state: only the managed `rccs` Skill exists in both roots, the
+unrelated file is preserved, retired managed Skill directories are removed,
+a second init does not duplicate files or hook entries, and the installed
+Skill includes parameter semantics.
 
 Evidence: `artifacts/rccs-closeout/U11/skill-tree-before.json`,
 `skill-tree-after-first.json`, and `skill-tree-after-second.json`.

@@ -180,6 +180,25 @@ test("rccs-recover rollback removes paths that did not exist before restore", as
   }
 });
 
+test("rccs-recover reports rollback failure instead of claiming restoration", async () => {
+  const home = await mkdtemp(join(tmpdir(), "rccs-recover-rollback-fail-"));
+  try {
+    const fixture = await createFixture(home);
+    assert.equal((await run("/bin/sh", [script, "backup", "--id", "snap-1"], { HOME: home })).code, 0);
+
+    const result = await run("/bin/sh", [script, "restore", "snap-1"], {
+      HOME: home,
+      FAIL_LIVE_CONFIG_CHECK: "1",
+      SABOTAGE_ROLLBACK: "1",
+    });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /rollback failed/);
+    assert.doesNotMatch(result.stderr, /previous files were reapplied/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("rccs-recover does not require Node on PATH", async () => {
   const home = await mkdtemp(join(tmpdir(), "rccs-recover-no-node-"));
   try {
@@ -199,11 +218,20 @@ async function createFixture(home) {
   const rccHome = join(home, ".rcc");
   const snapshotRoot = join(rccHome, "state", "backups", "rcc-snapshots");
   const logPath = join(home, "rccv3.log");
+  const providerDir = join(rccHome, "provider");
   await mkdir(binDir, { recursive: true });
   await mkdir(join(rccHome, "provider", "p1"), { recursive: true });
   await mkdir(join(rccHome, "secrets", "v3"), { recursive: true });
   const fakeRccv3 = `#!/bin/sh
 printf '%s\\n' "$*" >> '${logPath}'
+if [ "\${SABOTAGE_ROLLBACK:-}" = 1 ] && [ "$1" = config ] && [ "$2" = check ]; then
+  case "$*" in
+    */.rcc/config.toml)
+      mv '${providerDir}' '${providerDir}.sabotaged'
+      printf 'sabotaged\\n' > '${providerDir}'
+      ;;
+  esac
+fi
 if [ "\${FAIL_CONFIG_CHECK:-}" = 1 ] && [ "$1" = config ] && [ "$2" = check ]; then
   exit 1
 fi

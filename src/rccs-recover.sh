@@ -227,23 +227,25 @@ replace_tree() {
   __rccs_name=$(basename "$__rccs_dst")
   __rccs_staging="$__rccs_parent/.$__rccs_name.rccs-recover.$$"
   __rccs_previous="$__rccs_parent/.$__rccs_name.rccs-recover-previous.$$"
-  rm -rf "$__rccs_staging" "$__rccs_previous"
+  rm -rf "$__rccs_staging" "$__rccs_previous" || return 1
   __rccs_has_source=0
   if [ -d "$__rccs_src" ]; then
     __rccs_has_source=1
-    mkdir -p "$__rccs_staging"
-    cp -R "$__rccs_src/." "$__rccs_staging/"
+    mkdir -p "$__rccs_staging" || return 1
+    cp -R "$__rccs_src/." "$__rccs_staging/" || return 1
   fi
   if [ -d "$__rccs_dst" ]; then
-    mv "$__rccs_dst" "$__rccs_previous"
+    mv "$__rccs_dst" "$__rccs_previous" || return 1
   fi
-  if [ "$__rccs_has_source" -eq 1 ] && ! mv "$__rccs_staging" "$__rccs_dst"; then
+  if [ "$__rccs_has_source" -eq 0 ]; then
+    rm -rf "$__rccs_dst" || return 1
+  elif ! mv "$__rccs_staging" "$__rccs_dst"; then
     if [ -d "$__rccs_previous" ]; then
-      mv "$__rccs_previous" "$__rccs_dst"
+      mv "$__rccs_previous" "$__rccs_dst" || return 1
     fi
     return 1
   fi
-  rm -rf "$__rccs_previous"
+  rm -rf "$__rccs_previous" || return 1
 }
 
 restore_tree() {
@@ -251,31 +253,38 @@ restore_tree() {
   for name in rccv3 rccv3-admin rccv3-hooksd rccv3-codexapp; do
     if [ -f "$source_root/bin/$name" ]; then
       temporary="$BIN_DIR/.$name.rccs-recover.$$"
-      cp -p "$source_root/bin/$name" "$temporary"
-      chmod 755 "$temporary"
-      mv -f "$temporary" "$BIN_DIR/$name"
+      cp -p "$source_root/bin/$name" "$temporary" || return 1
+      chmod 755 "$temporary" || return 1
+      mv -f "$temporary" "$BIN_DIR/$name" || return 1
     else
-      rm -f "$BIN_DIR/$name"
+      rm -f "$BIN_DIR/$name" || return 1
     fi
   done
   if [ -f "$source_root/config/config.toml" ]; then
-    mkdir -p "$(dirname "$CONFIG_PATH")"
+    mkdir -p "$(dirname "$CONFIG_PATH")" || return 1
     temporary="$(dirname "$CONFIG_PATH")/.config.toml.rccs-recover.$$"
-    cp -p "$source_root/config/config.toml" "$temporary"
-    mv -f "$temporary" "$CONFIG_PATH"
+    cp -p "$source_root/config/config.toml" "$temporary" || return 1
+    mv -f "$temporary" "$CONFIG_PATH" || return 1
   else
-    rm -f "$CONFIG_PATH"
+    rm -f "$CONFIG_PATH" || return 1
   fi
-  replace_tree "$source_root/config/provider" "$PROVIDER_DIR"
-  replace_tree "$source_root/config/secrets" "$SECRETS_DIR"
+  replace_tree "$source_root/config/provider" "$PROVIDER_DIR" || return 1
+  replace_tree "$source_root/config/secrets" "$SECRETS_DIR" || return 1
   for name in rcc routecodex; do
     if [ -f "$source_root/aliases/$name" ]; then
-      target=$(cat "$source_root/aliases/$name")
-      ln -sfn "$target" "$BIN_DIR/$name"
+      target=$(cat "$source_root/aliases/$name") || return 1
+      ln -sfn "$target" "$BIN_DIR/$name" || return 1
     else
-      rm -f "$BIN_DIR/$name"
+      rm -f "$BIN_DIR/$name" || return 1
     fi
   done
+}
+
+rollback_restore() {
+  if restore_tree "$1"; then
+    return 0
+  fi
+  fail "rollback failed; live managed paths may be inconsistent: $1"
 }
 
 runtime_restart() {
@@ -300,15 +309,15 @@ restore_command() {
 
   rollback=$(save_rollback "$(date -u '+%Y%m%dT%H%M%SZ').$$")
   if ! restore_tree "$directory"; then
-    restore_tree "$rollback" || true
+    rollback_restore "$rollback"
     fail "restore failed; previous files were reapplied"
   fi
   if ! "$RCCV3" config check -c "$CONFIG_PATH" >/dev/null; then
-    restore_tree "$rollback" || true
+    rollback_restore "$rollback"
     fail "restored config check failed; previous files were reapplied"
   fi
   if ! runtime_restart; then
-    restore_tree "$rollback" || true
+    rollback_restore "$rollback"
     runtime_restart >/dev/null 2>&1 || true
     fail "restored runtime failed to restart; previous files were reapplied"
   fi

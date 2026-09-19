@@ -30,7 +30,9 @@ queued submission remains pending after the add, CodexApp starts it explicitly
 with `thread/queue/start`. The liveness path never steers.
 If `thread/resume` is blocked by an existing active writer, CodexApp reports a
 definitive `native_thread_busy` result. The occurrence remains deferred and is
-retried on a later liveness tick; it is not classified as uncertain delivery.
+retried on a later liveness tick with a new attempt identity; it is not
+classified as uncertain delivery, and a definitive pre-send failure never
+reuses a message identity that CodexApp has already recorded.
 
 The same DAG also defines what happens after a wake is emitted. Native
 acceptance is only one receipt state; delivery, execution, reply, and read are

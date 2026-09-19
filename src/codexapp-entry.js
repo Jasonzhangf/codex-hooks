@@ -148,16 +148,7 @@ async function sessionStatus(address) {
   const { target, sessionId } = resolveTarget(address);
   const native = adapter(target);
   const thread = await native.threadStatus(sessionId);
-  const status = normalizeThreadStatus(thread.status);
-  if (status.state === "working") {
-    try {
-      const activeTurnId = await native.activeTurnId(sessionId);
-      if (activeTurnId) status.active_turn_id = activeTurnId;
-      else status.state = "idle";
-    } catch (error) {
-      if (error?.code !== "native_method_unsupported") throw error;
-    }
-  }
+  const status = await observeThreadStatus(native, sessionId, thread.status);
   return {
     address: { scopeId: target.scope_id, sessionId },
     scopeId: target.scope_id,
@@ -178,7 +169,7 @@ async function listThreads(address) {
     const thread = await adapter(target).threadStatus(threadId);
     threads.push({
       threadId,
-      status: normalizeThreadStatus(thread.status),
+      status: await observeThreadStatus(adapter(target), threadId, thread.status),
     });
   }
   return {
@@ -453,6 +444,19 @@ function normalizeThreadStatus(status) {
       : "unknown",
     input_active: false,
   };
+}
+
+async function observeThreadStatus(native, threadId, status) {
+  const normalized = normalizeThreadStatus(status);
+  if (normalized.state !== "working") return normalized;
+  try {
+    const activeTurnId = await native.activeTurnId(threadId);
+    if (activeTurnId) return { ...normalized, active_turn_id: activeTurnId };
+    return { state: "idle", input_active: false };
+  } catch (error) {
+    if (error?.code !== "native_method_unsupported") throw error;
+    return { state: "unknown", input_active: false };
+  }
 }
 
 class NativeAppServer {

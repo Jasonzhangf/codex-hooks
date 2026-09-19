@@ -161,20 +161,14 @@ test("longhorizon liveness wakes an interrupted target through queue", async () 
   assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].enabled, true);
 });
 
-test("longhorizon liveness defers an active-writer resume and retries after release", async () => {
-  const { codexapp, daemon, timer, store, registered } = setup({ state: "idle" });
-  let busyAttempts = 2;
+test("longhorizon liveness skips a deferred active-writer resume and advances interval", async () => {
+  const { codexapp, daemon, timer, store, registered } = setup({ state: "starting" });
   const attempts = [];
   codexapp.send_message = async (request) => {
     attempts.push(request.attempt_id);
-    if (busyAttempts > 0) {
-      busyAttempts -= 1;
-      throw Object.assign(new Error("thread thread-1 already has an active writer"), {
-        code: "native_thread_busy",
-      });
-    }
-    codexapp.sends.push(request);
-    return { accepted: true, attempt_id: request.attempt_id };
+    throw Object.assign(new Error("thread thread-1 already has an active writer"), {
+      code: "native_thread_busy",
+    });
   };
 
   timer.clock.advance(60_000);
@@ -187,21 +181,21 @@ test("longhorizon liveness defers an active-writer resume and retries after rele
   assert.equal(daemon.store.getIntent(intentId).decision, "deferred");
   assert.equal(daemon.store.getIntent(intentId).state, "deferred");
 
+  codexapp.state = "idle";
   const second = await timer.tick();
-  assert.equal(second[0].result.decision, "deferred");
-  assert.equal(second[0].result.deferred.length, 1);
-  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "deferred_while_working");
-
-  const third = await timer.tick();
-  assert.equal(third[0].result.decision, "sent");
-  assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "enabled");
-  assert.equal(codexapp.sends.length, 1);
+  assert.equal(second[0].result.decision, "skipped");
+  assert.equal(second[0].result.skipped.length, 1);
+  const advanced = store.getControl("schedules")[registered.liveness_schedule_id];
+  assert.equal(advanced.state, "enabled");
+  assert.equal(advanced.last_decision, "skipped");
+  assert.equal(advanced.next_at, "2026-09-18T12:02:00.000Z");
+  assert.equal(daemon.store.getIntent(intentId).decision, "skipped");
+  assert.equal(daemon.store.getIntent(intentId).state, "cancelled");
+  assert.equal(codexapp.sends.length, 0);
   assert.equal(codexapp.steers.length, 0);
-  assert.deepEqual(attempts, [
-    intentId,
-    `${intentId}:resume:1`,
-    `${intentId}:resume:2`,
-  ]);
+  assert.deepEqual(attempts, [`${intentId}:resume:1`]);
+  assert.deepEqual(await timer.tick(), []);
+  assert.equal(attempts.length, 1);
 });
 
 test("longhorizon liveness applies the active idle interrupted state matrix through queue wake", async () => {

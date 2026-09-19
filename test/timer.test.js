@@ -89,6 +89,51 @@ test("timer due while working is deferred and resumes after idle", async () => {
   assert.equal(codexapp.sends.length, 1);
 });
 
+test("deferred timer retries a definitive busy resume with a fresh identity", async () => {
+  const { codexapp, daemon, store } = setup({ state: "starting" });
+  const clock = new ManualClock("2026-09-11T10:00:00.000Z");
+  const timer = new TimerOperator({
+    store,
+    clock,
+    dispatch: (intent) => daemon.dispatchIntent(intent, { kind: "timer" }),
+    resume: (target) => daemon.flushPending(target),
+  });
+  let busyAttempts = 2;
+  const attempts = [];
+  codexapp.send_message = async (request) => {
+    attempts.push(request.attempt_id);
+    if (busyAttempts > 0) {
+      busyAttempts -= 1;
+      throw Object.assign(new Error("thread thread-1 already has an active writer"), {
+        code: "native_thread_busy",
+      });
+    }
+    codexapp.sends.push(request);
+    return { accepted: true, attempt_id: request.attempt_id };
+  };
+
+  const first = await timer.tick();
+  assert.equal(first[0].result.decision, "deferred");
+  const intentId = first[0].result.delivery.intent_id;
+  codexapp.state = "idle";
+
+  const second = await timer.tick();
+  assert.equal(second[0].result.decision, "deferred");
+  clock.advance(60_000);
+  const third = await timer.tick();
+  assert.equal(third[0].result.decision, "deferred");
+  clock.advance(60_000);
+  const fourth = await timer.tick();
+  assert.equal(fourth[0].result.decision, "sent");
+  assert.equal(store.getControl("schedules")["daily-check"].state, "sent");
+  assert.equal(codexapp.sends.length, 1);
+  assert.deepEqual(attempts, [
+    `${intentId}:resume:1`,
+    `${intentId}:resume:2`,
+    `${intentId}:resume:3`,
+  ]);
+});
+
 test("working_allowed timer explicitly sends while working", async () => {
   const { codexapp, daemon, store } = setup({ state: "working", sendMode: SEND_MODES.WORKING_ALLOWED });
   const timer = new TimerOperator({

@@ -32,6 +32,7 @@ test("state machine covers every session state and send mode", async () => {
   assert.ok(machine.machines.message.states.includes("deduplicated"));
   assert.ok(machine.machines.message.states.includes("consumed"));
   assert.ok(machine.machines.message.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["read", "consumed_ack", "consumed"])));
+  assert.ok(machine.machines.message.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["deferred", "busy_skip", "cancelled"])));
   assert.ok(machine.machines.message.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["unknown_delivery", "reconcile_target_receipt", "delivered"])));
   for (const state of ["degraded", "stopping", "stopped", "crashed", "restarting"]) assert.ok(machine.machines.runtime.states.includes(state), `missing runtime state: ${state}`);
   for (const action of ["observe", "allow", "deny", "delay", "inject"]) assert.ok(machine.machines.hook.states.includes(action), `missing hook action: ${action}`);
@@ -40,6 +41,7 @@ test("state machine covers every session state and send mode", async () => {
   assert.ok(machine.machines.schedule.states.includes("stopped"));
   assert.ok(machine.machines.schedule.states.includes("skipped"));
   assert.ok(machine.machines.schedule.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["send_pending", "uncertain_transport", "unknown_delivery"])));
+  assert.ok(machine.machines.schedule.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["deferred_while_working", "busy_skip", "skipped"])));
   assert.ok(machine.machines.schedule.transitions.some((transition) => JSON.stringify(transition) === JSON.stringify(["enabled", "stop", "stopped"])));
   assert.ok(machine.machines.subagent.states.includes("stopped"));
   assert.ok(machine.machines.subagent.states.includes("released"));

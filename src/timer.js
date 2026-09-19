@@ -79,11 +79,23 @@ export class TimerOperator {
         const resumed = await this.resume(target);
         const sent = resumed.sent?.find((delivery) => delivery.intent_id === occurrenceId);
         const failed = resumed.failed?.find((delivery) => delivery.intent_id === occurrenceId);
+        const deferred = resumed.deferred?.find((delivery) => delivery.intent_id === occurrenceId);
+        const skipped = resumed.skipped?.find((delivery) => delivery.intent_id === occurrenceId);
         if (sent) this.finishOccurrence(schedules, schedule, occurrence, { state: "sent", sent_at: this.clock.now() });
         else if (failed) this.finishOccurrence(schedules, schedule, occurrence, {
           state: failed.state === "unknown_delivery" ? "unknown_delivery" : "failed",
           failure: clone(failed.evidence || failed),
         });
+        else if (skipped || (deferred && schedule.busy_policy === BUSY_POLICIES.SKIP && deferred.evidence?.code === "native_thread_busy")) {
+          const delivery = skipped || deferred;
+          this.finishOccurrence(schedules, schedule, occurrence, {
+            state: "skipped",
+            skipped_at: this.clock.now(),
+            last_decision: "skipped",
+            last_delivery: clone(delivery),
+            failure: clone(delivery.evidence),
+          });
+        }
         results.push({ schedule_id: schedule.id, occurrence_id: occurrenceId, action, at, result: resumed });
         continue;
       }

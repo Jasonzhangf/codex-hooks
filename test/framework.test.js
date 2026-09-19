@@ -234,7 +234,7 @@ test("idle_only does not disturb a working session and flushes after idle", asyn
   codexapp.state = "idle";
   const resumed = await daemon.flushPending(target());
   assert.equal(resumed.sent.length, 1);
-  assert.equal(codexapp.sends[0].attempt_id, "idle-only-1:resume");
+  assert.equal(codexapp.sends[0].attempt_id, "idle-only-1:resume:1");
 });
 
 test("working_allowed sends while working, while unknown and disconnected fail closed", async () => {

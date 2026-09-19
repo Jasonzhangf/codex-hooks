@@ -332,7 +332,7 @@ export class HooksDaemon {
     const inflight = this.inflightSends.get(intent.intent_id);
     if (inflight) return { ...(await inflight), idempotent: true };
     if (existing.decision !== "deferred") return this.result({ hook_event_name: "daemon:resume" }, intent.source, existing.decision, { delivery: existing });
-    const attemptId = `${intent.intent_id}:resume`;
+    const attemptId = nextResumeAttemptId(intent.intent_id, existing);
     const work = this.send({ hook_event_name: "daemon:resume" }, intent.source, intent, state, attemptId);
     this.inflightSends.set(intent.intent_id, work);
     try {
@@ -556,6 +556,16 @@ function assertAcceptedReceipt(value, attemptId) {
   const error = new Error("codexapp returned no accepted send receipt");
   error.code = "invalid_send_receipt";
   throw error;
+}
+
+function nextResumeAttemptId(intentId, existing) {
+  const base = `${intentId}:resume`;
+  const previous = existing?.evidence?.attempt_id;
+  if (typeof previous !== "string" || !previous.startsWith(`${base}:`)) return `${base}:1`;
+  const suffix = previous.slice(base.length + 1);
+  const sequence = Number(suffix);
+  if (!Number.isSafeInteger(sequence) || sequence < 1 || String(sequence) !== suffix) return `${base}:1`;
+  return `${base}:${sequence + 1}`;
 }
 
 function assertDeliveryEvidence(existing, state, evidence) {

@@ -164,7 +164,9 @@ test("longhorizon liveness wakes an interrupted target through queue", async () 
 test("longhorizon liveness defers an active-writer resume and retries after release", async () => {
   const { codexapp, daemon, timer, store, registered } = setup({ state: "idle" });
   let busyAttempts = 2;
+  const attempts = [];
   codexapp.send_message = async (request) => {
+    attempts.push(request.attempt_id);
     if (busyAttempts > 0) {
       busyAttempts -= 1;
       throw Object.assign(new Error("thread thread-1 already has an active writer"), {
@@ -195,6 +197,11 @@ test("longhorizon liveness defers an active-writer resume and retries after rele
   assert.equal(store.getControl("schedules")[registered.liveness_schedule_id].state, "enabled");
   assert.equal(codexapp.sends.length, 1);
   assert.equal(codexapp.steers.length, 0);
+  assert.deepEqual(attempts, [
+    intentId,
+    `${intentId}:resume:1`,
+    `${intentId}:resume:2`,
+  ]);
 });
 
 test("longhorizon liveness applies the active idle interrupted state matrix through queue wake", async () => {

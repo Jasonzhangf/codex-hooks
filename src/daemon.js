@@ -1,5 +1,6 @@
 import {
   DELIVERY_STATES,
+  BUSY_POLICIES,
   SEND_OPERATIONS,
   SEND_MODES,
   DEFERRED_SESSION_STATES,
@@ -299,12 +300,27 @@ export class HooksDaemon {
 
     const sent = [];
     const deferredResults = [];
+    const skipped = [];
     const failed = [];
     for (const intent of deferred) {
       try {
         const result = await this.resumePendingIntent(intent, state);
         if (result.decision === "sent") sent.push(clone(result.delivery));
-        else if (result.decision === "deferred") deferredResults.push(clone(result.delivery));
+        else if (result.decision === "deferred") {
+          if (intent.busy_policy === BUSY_POLICIES.SKIP && result.delivery?.evidence?.code === "native_thread_busy") {
+            const skippedDelivery = this.transition(intent, "cancelled", {
+              state,
+              code: "native_thread_busy",
+              message: result.delivery.evidence.message,
+              attempt_id: result.delivery.evidence.attempt_id,
+              at: this.now(),
+            });
+            this.rememberIntent(intent, skippedDelivery, "skipped");
+            skipped.push(clone(skippedDelivery));
+          } else {
+            deferredResults.push(clone(result.delivery));
+          }
+        }
         else failed.push(clone(result.delivery));
       } catch (error) {
         failed.push({ intent_id: intent.intent_id, state: "failed", evidence: { state, code: error.code || "send_failed", message: error.message } });
@@ -314,6 +330,8 @@ export class HooksDaemon {
       state,
       decision: deferredResults.length > 0
         ? "deferred"
+        : skipped.length > 0
+          ? "skipped"
         : sent.length > 0
           ? "sent"
           : failed.length > 0
@@ -321,6 +339,7 @@ export class HooksDaemon {
             : "sent",
       sent,
       deferred: deferredResults,
+      skipped,
       failed,
     };
   }

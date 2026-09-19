@@ -29,8 +29,10 @@ and `notLoaded` also normalize to send-eligible states and receive a
 queued submission remains pending after the add, CodexApp starts it explicitly
 with `thread/queue/start`. The liveness path never steers.
 If `thread/resume` is blocked by an existing active writer, CodexApp reports a
-definitive `native_thread_busy` result. The occurrence remains deferred and is
-retried on a later liveness tick with a new attempt identity; it is not
+definitive `native_thread_busy` result. For ordinary deferred schedules the
+occurrence remains pending and is retried with a new attempt identity. For
+LongHorizon `busy_policy=skip`, the current liveness occurrence is recorded as
+skipped and the recurring schedule advances to the next interval; it is not
 classified as uncertain delivery, and a definitive pre-send failure never
 reuses a message identity that CodexApp has already recorded.
 
@@ -62,7 +64,8 @@ flowchart TD
   E3 --> G2["normalize interrupted: emit queue MessageIntent"]
   E6 --> G3["normalize idle: resume thread, then emit queue MessageIntent"]
   G3 --> G4{"active writer?"}
-  G4 -->|yes| H1
+  G4 -->|defer| H1
+  G4 -->|skip| H2["skip current occurrence; advance interval"]
   G4 -->|no| H
   G --> H["body names goal file and continue instruction"]
   G2 --> H
@@ -101,6 +104,7 @@ flowchart TD
 | Idle/interrupted/cancelled → eligible | `codexapp` | native `idle`, `interrupted`, or `cancelled` | normalized send-eligible state | native state is not treated as a direct policy state |
 | Not loaded → resume + idle | `codexapp` | native `notLoaded` | `thread/resume`, then normalized `idle` | no queue add before resume |
 | Resume → active writer deferred | `codexapp` → `hooksd` | `thread/resume` returns active writer | definitive `native_thread_busy`; occurrence stays deferred | no `unknown_delivery`, queue add, or steer |
+| Resume → active writer skipped | `codexapp` → `hooksd` | `thread/resume` returns active writer with `busy_policy=skip` | definitive `native_thread_busy`; current occurrence skipped and interval advanced | no retry loop, `unknown_delivery`, queue add, or steer |
 | Starting/stopping → deferred | `codexapp` | native `starting` or `stopping` | normalized deferred state | no blind send |
 | System error → failed | `codexapp` | native `systemError` | normalized `failed` | no blind send |
 | Unknown/disconnected/failed → fail closed | `codexapp` | native `unknown`, `disconnected`, or `failed` | normalized fail-closed state | no blind send |
@@ -136,8 +140,10 @@ flowchart TD
    the wake.
 8. A queued submission that remains pending after `thread/queue/add` is
    explicitly started with `thread/queue/start`.
-9. An active writer during `thread/resume` keeps the occurrence deferred for a
-   later retry; it is not uncertain delivery and does not queue or steer.
+9. An active writer during `thread/resume` is definitive busy. With
+   `busy_policy=defer`, the occurrence remains pending for a later retry; with
+   `busy_policy=skip`, the current occurrence is skipped and the interval
+   advances. It is not uncertain delivery and does not queue or steer.
 10. The queue wake body names the goal file and instructs the target to continue
    executing the goal.
 11. Starting and stopping are deferred until a legal observation.
@@ -162,7 +168,8 @@ flowchart TD
 | Idle/interrupted queue wake | `test/longhorizon-liveness.test.js`: wakes an idle and interrupted target through queue; applies the active idle interrupted state matrix through queue wake |
 | Native status normalization | `test/codexapp-entry.test.js`: maps every native thread status through the control socket |
 | Not loaded resume and interrupted queue start | `test/codexapp-entry.test.js`: applies every native status through the native bridge |
-| Active writer resume deferral | `test/codexapp-entry.test.js`: reports an active writer during notLoaded resume as definitive; `test/longhorizon-liveness.test.js`: defers an active-writer resume and retries after release |
+| Active writer resume deferral | `test/codexapp-entry.test.js`: reports an active writer during notLoaded resume as definitive; `test/timer.test.js`: retries a deferred busy resume with fresh identities |
+| Active writer LongHorizon skip | `test/longhorizon-liveness.test.js`: skips a deferred active-writer resume and advances interval |
 | Starting/stopping defer | `test/longhorizon-liveness.test.js`: defers while starting or stopping |
 | Fail closed | `test/longhorizon-liveness.test.js`: fails closed for unknown disconnected failed |
 | Missing session | `test/longhorizon-liveness.test.js`: records a missing session as terminal |
